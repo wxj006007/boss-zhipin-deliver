@@ -16,7 +16,7 @@
   - 每次投递都回读页面确认「送达」才继续；遇未知弹窗 / 误触 / 日上限 立即整批停手。
   - 弹窗只点白名单关闭键（留在此页/继续沟通/取消/关闭/稍后），绝不点发送/上传类按钮。
   - 连续投递失败熔断（FAIL_BREAKER）：连续 ≥3 次失败/超时即停手。
-  - 投递全程停在推荐页/搜索页，绝不把会话停在 /chat。
+  - 本文件的默认招呼路径停留岗位列表；greeting.py 的自定义文本路径会进入会话并在核验后返回。
 
 用法（仅收尾/诊断，投递主流程在 _live_driver.py）：
     python scripts/phase_stream.py --workdir <目录> --mode report
@@ -408,12 +408,13 @@ def _panel_shows_job(jid, title, session=SESSION):
     该判断永远为真，会掩盖'面板没切到目标岗'的脱钩，导致向错误岗位投递却记成成功。
     """
     ka = evaluate(r"""(function(){
-        var box=document.querySelector('#main .job-detail')||document;
+        var box=document.querySelector('.job-detail-box')||document.querySelector('#main .job-detail');
+        if(!box) return '';
         var els=box.querySelectorAll('button,a');
         for(var i=0;i<els.length;i++){ var t=(els[i].textContent||'').trim();
             if(t==='立即沟通'){ return els[i].getAttribute('ka')||''; } }
         return '';
-    })()""")
+    })()""", session=session)
     if ka and jid and jid in ka:
         return True
     return False

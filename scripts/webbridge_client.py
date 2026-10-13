@@ -88,24 +88,27 @@ def parse_salary_max(value):
 # 模块级 API 函数（自带重试）
 # ═══════════════════════════════════════════════════════════
 
-def api(action, args=None, session=SESSION, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=DEFAULT_TIMEOUT):
+def api(action, args=None, session=SESSION, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=DEFAULT_TIMEOUT, retries=MAX_RETRIES):
     """发送 WebBridge API 请求，返回解析后的 dict。自带 MAX_RETRIES 次重试。"""
     if args is None:
         args = {}
     last_error = None
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(retries):
+        conn = None
         try:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
             body = json.dumps({"action": action, "args": args, "session": session}).encode("utf-8")
             conn.request("POST", "/command", body=body, headers={"Content-Type": "application/json"})
             resp = conn.getresponse()
             data = json.loads(resp.read().decode("utf-8"))
-            conn.close()
             return data
         except Exception as e:
             last_error = e
-            if attempt < MAX_RETRIES - 1:
+            if attempt < retries - 1:
                 time.sleep(RETRY_DELAY)
+        finally:
+            if conn is not None:
+                conn.close()
     raise last_error
 
 
@@ -113,6 +116,14 @@ def evaluate(code, session=SESSION):
     """执行 JS 并返回字符串结果"""
     r = api("evaluate", {"code": code}, session=session)
     return r.get("data", {}).get("value", "")
+
+
+def evaluate_once(code, session=SESSION):
+    """Execute a mutation once. A lost response must never replay a send."""
+    r = api("evaluate", {"code": code}, session=session, retries=1)
+    if r.get("ok") is not True or "value" not in r.get("data", {}):
+        raise RuntimeError("WebBridge 操作未确认，请回读页面；不自动重试")
+    return r["data"]["value"]
 
 
 class PageLandingError(Exception):
@@ -601,6 +612,7 @@ class ProgressManager:
         return job_id in self.blocked_ids
 
     def add_delivered(self, job_id, job):
+        self.data["uncertain"] = [j for j in self.data.get("uncertain", []) if j.get("jobId") != job_id]
         record = dict(job)
         record.update(jobId=job_id, result="success")
         rows = self.data.setdefault("delivered", [])
@@ -614,8 +626,11 @@ class ProgressManager:
     def add_uncertain(self, job_id, job, reason):
         record = dict(job, jobId=job_id, result="uncertain", reason=reason, verify=False)
         rows = self.data.setdefault("uncertain", [])
-        if not any(x.get("jobId") == job_id for x in rows):
-            rows.append(record)
+        for previous in rows:
+            if previous.get("jobId") == job_id:
+                previous.update(record)
+                return
+        rows.append(record)
 
     def add_failed(self, job_id, job, reason):
         self.data['failed'].append({

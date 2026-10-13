@@ -21,6 +21,7 @@ from urllib.parse import quote
 from scripts import webbridge_client as wb
 from scripts import _live_driver as drv
 from scripts.runtime import resolve_workdir, atomic_write_json
+from scripts.greeting import validate_greeting
 
 WORKDIR = resolve_workdir()
 POOL = os.path.join(WORKDIR, "pool.json")
@@ -99,6 +100,11 @@ def cmd_go(path):
         raise ValueError("同一岗位同时出现在deliver/reject中，停止以免执行错误决策")
     if any(jid not in pool for jid in delivers):
         raise ValueError("待投岗位不在候选池中，先重新采集并审核")
+    greetings = dec.get("greetings")
+    if greetings is not None:
+        if not isinstance(greetings, dict) or any(jid not in greetings for jid in delivers):
+            raise ValueError("提供 greetings 时，每个待投岗位都必须有专属招呼语")
+        greetings = {jid: validate_greeting(greetings[jid]) for jid in delivers}
     res = {"delivered": [], "failed": [], "rejected": [], "skipped": [], "stopped": False}
     try:
         for kw, ids in group_by_kw(pool, delivers + list(rejects)).items():
@@ -111,7 +117,8 @@ def cmd_go(path):
                     continue
                 try:
                     r = drv.cmd_deliver(jid, meta.get("company", ""), meta.get("salary", ""),
-                                        meta.get("industry", ""), meta.get("direction", ""))
+                                        meta.get("industry", ""), meta.get("direction", ""),
+                                        greeting=greetings[jid] if greetings is not None else None)
                 except Exception as e:
                     res["failed"].append({"jobId": jid, "reason": str(e)})
                     res["stopped"], res["stop_reason"] = True, str(e)

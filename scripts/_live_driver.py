@@ -78,12 +78,13 @@ import sys, os, json, time, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.phase_stream import (
     deliver_click, _panel_shows_job, evaluate, click, SESSION,
-    search_url_for, scroll_jobs_list, RECOMMEND_URL,
+    search_url_for, scroll_jobs_list, RECOMMEND_URL, _try_locate_card,
 )
 from scripts.webbridge_client import (
     ProgressManager, extract_jobs, navigate, parse_salary_max,
 )
 from scripts.config_v3 import load_profile
+from scripts.greeting import deliver_greeting, load_greeting, validate_greeting
 from scripts.runtime import resolve_workdir, atomic_write_json
 
 WORKDIR = resolve_workdir()
@@ -390,11 +391,19 @@ def cmd_open(jid):
     ok = click(sel)
     time.sleep(2.0)
     panel_ok = _panel_shows_job(jid, "")
+    located = "ok" if panel_ok else _try_locate_card(jid, "", session=SESSION)
+    if not panel_ok:
+        panel_ok = located == "ok" and _panel_shows_job(jid, "")
+        ok = panel_ok
+    if not panel_ok:
+        return {"clicked": ok, "panel_ok": False, "detail": "", "title": "",
+                "not_found": located == "absent", "location_status": located}
     detail = evaluate("""(function(){var d=document.querySelector('.job-detail-box')||document.querySelector('#main .job-detail');return d?d.innerText:'';})()""")
-    return {"clicked": ok, "panel_ok": panel_ok, "detail": detail}
+    title = evaluate("""(()=>{const d=document.querySelector('.job-detail-box')||document.querySelector('#main .job-detail');return d?.querySelector('.job-name')?.innerText.trim()||''})()""")
+    return {"clicked": ok, "panel_ok": panel_ok, "detail": detail if panel_ok else "", "title": title if panel_ok else ""}
 
 
-def cmd_deliver(jid, company="", salary="", industry="", direction=""):
+def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=None):
     """Deliver ONE live card by jid. Job metadata (company/salary/industry/
     direction) is taken from simple positional args (shell-safe, no JSON).
 
@@ -405,6 +414,8 @@ def cmd_deliver(jid, company="", salary="", industry="", direction=""):
     Usage: deliver <jid> [company] [salary] [industry] [direction]
     direction = 高层投递方向标签（活动策划/文旅运营/HR招聘…），用于收尾汇报页按方向分组
     """
+    if greeting is not None:
+        greeting = validate_greeting(greeting)
     pm = ProgressManager(os.path.join(WORKDIR, "stream_progress.json")).load()
     if pm.is_done(jid):
         return {"delivered_ok": False, "already_done": True, "reason": "已处理或待核对，避免重复发送"}
@@ -412,15 +423,31 @@ def cmd_deliver(jid, company="", salary="", industry="", direction=""):
         return {"delivered_ok": False, "stopped": True, "reason": "上轮异常已停止；核对后用 walk --reset 恢复"}
     op = cmd_open(jid)  # scroll+click the card, verify panel is on this job
     if not op.get("panel_ok"):
-        # v6.11.1 修（首屏外卡片误判失败）：cmd_open 是单次定位，卡片不在当前 DOM 首屏时
-        # 旧逻辑直接判 failed，从不进入 deliver_click 内部的 _try_locate_card 多轮滚动定位。
-        # 改为放行交给 deliver_click：其内部会多轮滚动懒加载定位 + 点沟通前面板复核，
-        # 真不在页上时返回 not_found（仅跳过该岗、不中止整批），安全性不降。
-        pass
-    job = {"jobId": jid, "title": "", "company": company,
+        if op.get("not_found"):
+            return {"delivered_ok": False, "not_found": True, "detail": op,
+                    "reason": "目标卡片不在当前列表，跳过该岗位"}
+        if greeting is not None:
+            st = walk_state()
+            st["consecutive_failures"] = st.get("consecutive_failures", 0) + 1
+            stopped = st["consecutive_failures"] >= 3
+            if stopped:
+                st["delivery_halted"] = True
+            save_state(st)
+            return {"delivered_ok": False, "stopped": stopped, "detail": op,
+                    "reason": "目标岗位面板未确认，不发送自定义招呼语"}
+        # 默认招呼保留 WorkBuddy 的兜底：由 deliver_click 重新定位并核验。
+    if greeting is not None and not (op.get("detail") or "").strip():
+        return {"delivered_ok": False, "reason": "未读取到当前岗位JD，不发送自定义招呼语"}
+    job = {"jobId": jid, "title": op.get("title", ""), "company": company,
            "salary": salary, "industry": industry, "direction": direction, "city": ""}
+    if greeting is not None:
+        job["greeting"] = greeting
+        # Persist before initiating communication, including across process crashes.
+        pm.add_uncertain(jid, job, "自定义招呼正在发送；若中断需核对后恢复")
+        pm.save()
     try:
-        res = deliver_click(job, session=SESSION, auto=True)
+        res = (deliver_greeting(job, greeting, session=SESSION) if greeting is not None
+               else deliver_click(job, session=SESSION, auto=True))
     except Exception as error:
         pm.add_uncertain(jid, job, f"执行异常，需核对是否已发送：{error}")
         pm.save()
@@ -428,6 +455,12 @@ def cmd_deliver(jid, company="", salary="", industry="", direction=""):
         st["delivery_halted"] = True
         save_state(st)
         raise
+    if greeting is not None and not res.get("uncertain"):
+        pm.data["uncertain"] = [x for x in pm.data.get("uncertain", []) if x.get("jobId") != jid]
+        # Success is committed with add_delivered below; do not clear the crash
+        # protection on disk before that write.
+        if not res.get("delivered_ok"):
+            pm.save()
     if res.get("uncertain"):
         pm.add_uncertain(jid, job, res.get("reason", "送达未确认，需核对"))
         pm.save()
@@ -446,12 +479,15 @@ def cmd_deliver(jid, company="", salary="", industry="", direction=""):
                 "document.querySelector('#main .job-detail');"
                 "var e=b?b.querySelector('.job-name'):null;"
                 "return e?e.innerText.trim():'';})()") or ""
-            job["title"] = t
+            if greeting is None and t:
+                job["title"] = t
         except Exception:
             pass
         pm = ProgressManager(os.path.join(WORKDIR, "stream_progress.json")).load()
         job["verify"] = res.get("verify") is True
         job["verification_source"] = res.get("verification_source", "")
+        if res.get("message_id"):
+            job["message_id"] = res["message_id"]
         pm.add_delivered(job.get("jobId"), job)
         pm.save()
         # v6.9.1 修（顺序错乱根因）：投递会触发"立即沟通"弹窗→可能 wrong_path 导航回推荐页；
@@ -542,12 +578,17 @@ if __name__ == "__main__":
         jid = sys.argv[2]
         print(json.dumps(cmd_open(jid), ensure_ascii=False))
     elif action == "deliver":
-        jid = sys.argv[2]
-        company = sys.argv[3] if len(sys.argv) > 3 else ""
-        salary = sys.argv[4] if len(sys.argv) > 4 else ""
-        industry = sys.argv[5] if len(sys.argv) > 5 else ""
-        direction = sys.argv[6] if len(sys.argv) > 6 else ""
-        print(json.dumps(cmd_deliver(jid, company, salary, industry, direction),
+        import argparse
+        parser = argparse.ArgumentParser(description="投递一个岗位，可发送智能体生成的专属招呼语")
+        parser.add_argument("jid")
+        parser.add_argument("metadata", nargs="*", help="公司 薪资 行业 方向（可选）")
+        parser.add_argument("--greeting-file", help="UTF-8 JSON：jobId + greeting")
+        args = parser.parse_args(sys.argv[2:])
+        if len(args.metadata) > 4:
+            parser.error("最多四项岗位元数据")
+        metadata = args.metadata + [""] * (4 - len(args.metadata))
+        message = load_greeting(args.greeting_file, args.jid) if args.greeting_file else None
+        print(json.dumps(cmd_deliver(args.jid, *metadata, greeting=message),
                          ensure_ascii=False))
     elif action == "reject":
         jid = sys.argv[2]
