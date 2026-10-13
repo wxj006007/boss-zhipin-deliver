@@ -412,16 +412,11 @@ def cmd_deliver(jid, company="", salary="", industry="", direction=""):
         return {"delivered_ok": False, "stopped": True, "reason": "上轮异常已停止；核对后用 walk --reset 恢复"}
     op = cmd_open(jid)  # scroll+click the card, verify panel is on this job
     if not op.get("panel_ok"):
-        st = walk_state()
-        st["consecutive_failures"] = st.get("consecutive_failures", 0) + 1
-        stopped = st["consecutive_failures"] >= 3
-        if stopped:
-            st["delivery_halted"] = True
-        save_state(st)
-        return {"delivered_ok": False,
-                "stopped": stopped,
-                "reason": "panel did not show target job (not delivered)",
-                "detail": op}
+        # v6.11.1 修（首屏外卡片误判失败）：cmd_open 是单次定位，卡片不在当前 DOM 首屏时
+        # 旧逻辑直接判 failed，从不进入 deliver_click 内部的 _try_locate_card 多轮滚动定位。
+        # 改为放行交给 deliver_click：其内部会多轮滚动懒加载定位 + 点沟通前面板复核，
+        # 真不在页上时返回 not_found（仅跳过该岗、不中止整批），安全性不降。
+        pass
     job = {"jobId": jid, "title": "", "company": company,
            "salary": salary, "industry": industry, "direction": direction, "city": ""}
     try:
@@ -468,7 +463,9 @@ def cmd_deliver(jid, company="", salary="", industry="", direction=""):
         st["idx"] = 0
         st["last_jid"] = ""
         save_state(st)
-    if not res.get("delivered_ok") and not res.get("already_done"):
+    if not res.get("delivered_ok") and not res.get("already_done") and not res.get("not_found"):
+        # v6.11.2: not_found（卡片真不在当前页）按 skill 语义是"跳过"，不计入连续失败熔断；
+        # 熔断只针对真正的异常（面板错位/误点/弹窗异常）。
         st = walk_state()
         st["consecutive_failures"] = st.get("consecutive_failures", 0) + 1
         if st["consecutive_failures"] >= 3:

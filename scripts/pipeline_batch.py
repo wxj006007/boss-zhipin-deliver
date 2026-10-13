@@ -41,7 +41,9 @@ def kw_url(kw):
 
 
 def goto(kw):
+    from scripts import phase_stream as ps
     wb.navigate(kw_url(kw), wait_range=(5, 7), expect_url_contains="query=", label=f"搜索-{kw}")
+    ps.CURRENT_WORK_URL["url"] = kw_url(kw)  # v6.11.2: _ensure_recommend 意外跳页时回本组关键词页
     time.sleep(1.5)
     anomaly, reason = wb.detect_page_anomaly(check_blank=False)
     if anomaly or "security" in (wb.evaluate("window.location.href") or ""):

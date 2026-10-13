@@ -45,6 +45,9 @@ from scripts.runtime import atomic_write_text, salary_range_k
 RECOMMEND_URL = "https://www.zhipin.com/web/geek/jobs?ka=header-jobs"
 # 仅用于 _ensure_recommend 判定当前是否已在 BOSS 工作页（推荐页/搜索页同路径，仅 query 不同）
 WORKING_URL = RECOMMEND_URL
+# v6.11.2：当前批量分组的工作页 URL（pipeline_batch.goto 每次导航成功后写入）。
+# _ensure_recommend 意外跳页时回这里，而不是写死的推荐页。
+CURRENT_WORK_URL = {"url": ""}
 
 
 def search_url_for(query, city_code, job_type=""):
@@ -221,7 +224,7 @@ def click_popup_button(button_text, session=SESSION):
     """
     tag = evaluate(r"""(function(){
         var target=%s;
-        var boxes=document.querySelectorAll('.dialog-wrap,.dialog-container,.dialog-content,.dialog-box,[role=dialog]');
+        var boxes=document.querySelectorAll('.greet-boss-container,.greet-boss-dialog,.dialog-wrap,.dialog-container,.dialog-content,.dialog-box,[role=dialog]');
         var all=[];
         for(var b=0;b<boxes.length;b++){var br=boxes[b].getBoundingClientRect();
             if(br.width>0&&br.height>0) all=all.concat(Array.from(boxes[b].querySelectorAll('button,a')));}
@@ -347,15 +350,18 @@ def _feedback(label, session=SESSION):
 
 
 def _ensure_recommend(session=SESSION):
-    """确保在工作页（推荐页 或 行业搜索页）；若不在则导航过去一次（投递循环内仅首次会真正导航，之后全程停留）。
+    """确保在工作页（推荐页 或 当前分组的关键词搜索页）；若不在则导航过去一次。
     工作页 URL 路径均为 /web/geek/jobs（推荐页与搜索页同路径，仅 query 不同），
     故以该路径判定是否已在工作页；严禁 navigate 到 job_detail 详情 URL。
+    v6.11.2 修：关键词批量流程（pipeline_batch）中 WORKING_URL 写死为推荐页是过时状态，
+    意外跳走后应回【当前分组的关键词页】（由 pipeline_batch.goto 写入 CURRENT_WORK_URL），
+    落点校验用 target 自身的特征（含 query= 即搜索页），不再误报 header-jobs。
     """
     url, _, _ = snapshot_page(session=session)
     if "/web/geek/jobs" not in (url or ""):
-        is_search = WORKING_URL != RECOMMEND_URL
-        navigate(WORKING_URL, wait_range=(3, 5), session=session,
-                 expect_url_contains=("query=" if is_search else "header-jobs"),
+        target = CURRENT_WORK_URL.get("url") or WORKING_URL
+        navigate(target, wait_range=(3, 5), session=session,
+                 expect_url_contains=("query=" if "query=" in target else "header-jobs"),
                  label="工作页")
         time.sleep(1)
     return True
@@ -435,7 +441,7 @@ def card_exists(jid, session=SESSION):
     return str(r).strip().lower() in ("true", "1", "yes")
 
 
-def _try_locate_card(jid, title, session=SESSION, max_rounds=6):
+def _try_locate_card(jid, title, session=SESSION, max_rounds=12):
     """在【当前已导航到的工作页】上定位并选中目标卡片（含滚动加载更多）。
 
     返回:
@@ -500,12 +506,24 @@ def deliver_click(job, session=SESSION, auto=True):
             continue
         if ptype == "greet_sent":
             closed = click_popup_button("留在此页", session)
-            time.sleep(1.2)
-            url, _, remaining, on_chat = _feedback("发送成功后关闭弹窗", session)
+            # v6.11.1 修（每单必停根因）：点「留在此页」后弹窗淡出/二次提示有延迟，
+            # 旧逻辑单次回读 1.2s 会把"淡出中的 greet_sent"当成残留浮层 → stopped=True
+            # 导致每投成功一单整批停机。改为轮询等弹窗真正关闭（最多 ~6s）：
+            # 期间 greet_sent 残影/tip/resume_guide 顺手点掉；
+            # unknown / not_interested / daily_limit 仍立即判定停机（安全语义不降）。
+            final_pt = ""
+            for _ in range(6):
+                time.sleep(1.0)
+                final_pt = read_popup_type(session)
+                if final_pt == "" or final_pt in ("daily_limit", "unknown", "not_interested"):
+                    break
+                safe_close_popup(session)
+            url, _, _, on_chat = _feedback("发送成功后关闭弹窗", session)
             if on_chat:
                 _ensure_recommend(session)
             return {"delivered_ok": True, "verify": True, "verification_source": "success_popup",
-                    "wrong_path": on_chat, "stopped": on_chat or not str(closed).startswith("CLICKED") or bool(remaining)}
+                    "wrong_path": on_chat,
+                    "stopped": on_chat or bool(final_pt)}
         url, _, _ = snapshot_page(session=session)
         if "/chat" in url:
             _ensure_recommend(session)

@@ -3,3 +3,9 @@ __pycache__/
 *.tmp
 .tab_lock
 .restore-backups/
+
+# Local backups and personal runtime data
+*.bak
+*.bak-*
+user_profile.json
+boss_applied.json
