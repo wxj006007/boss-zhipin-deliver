@@ -29,6 +29,8 @@ if len(_HERE) >= 3 and _HERE[0] == "/" and _HERE[1].isalpha() and _HERE[2] == "/
 SKILL_DIR = os.path.dirname(_HERE)
 if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
+from scripts.accounts import context
+from scripts.webbridge_client import DEFAULT_HOST, DEFAULT_PORT
 
 # ── 检测结果 ──────────────────────────────────────
 class EnvResult:
@@ -63,16 +65,23 @@ def _check_chrome():
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
     ]
+    browser = (context() or {}).get('browser', 'chrome')
+    if browser == 'edge':
+        chrome_paths = [r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+                        os.path.expanduser(r'~\AppData\Local\Microsoft\Edge\Application\msedge.exe')]
     for p in chrome_paths:
         if os.path.exists(p):
             return True, f"已安装 ({p})"
     # Windows 还可尝试 where/which
     try:
-        r = subprocess.run(["where", "chrome"], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["where", "msedge" if browser == 'edge' else "chrome"], capture_output=True, text=True, timeout=5)
         if r.returncode == 0 and r.stdout.strip():
             return True, f"已安装 ({r.stdout.strip().splitlines()[0]})"
     except Exception:
         pass
+    if browser == 'edge':
+        return False, '未检测到 Edge 浏览器，请安装并启用 Kimi 浏览器扩展'
     return False, (
         "未检测到 Chrome 浏览器。\n"
         "   请前往 https://www.google.com/chrome/ 下载安装。"
@@ -80,13 +89,17 @@ def _check_chrome():
 
 
 # ── WebBridge 检测 ─────────────────────────────────
-_WEBBRIDGE_HOST = "127.0.0.1"
-_WEBBRIDGE_PORT = 10086
+_WEBBRIDGE_HOST = DEFAULT_HOST
+_WEBBRIDGE_PORT = DEFAULT_PORT
 
 
 def _check_webbridge():
     """检测 Kimi WebBridge 是否在本地端口 10086 可达。"""
     try:
+        if context():
+            from scripts.account_browser import bridge_status
+            status = bridge_status(context())
+            return bool(status.get('extension_connected')), f'账户桥接端口 {_WEBBRIDGE_PORT}，扩展连接={status.get("extension_connected")}'
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3)
         result = s.connect_ex((_WEBBRIDGE_HOST, _WEBBRIDGE_PORT))
@@ -113,6 +126,10 @@ def _check_boss_login():
       - 页面含已登录标志（导航栏有用户信息 / body 含正常推荐内容）
     """
     try:
+        if context():
+            from scripts.account_browser import verify_identity
+            verify_identity()
+            return True, '浏览器及账户身份已核验'
         # 延迟导入，避免无 WebBridge 时 import 失败
         from scripts.webbridge_client import api, evaluate as _ev
         import time as _t
@@ -160,7 +177,7 @@ def check_env(verbose=True):
 
     # ① Chrome
     passed, detail = _check_chrome()
-    result.add("Chrome 浏览器", passed, detail)
+    result.add((context() or {}).get('browser', 'chrome') + ' 浏览器', passed, detail)
 
     # ② WebBridge
     passed, detail = _check_webbridge()

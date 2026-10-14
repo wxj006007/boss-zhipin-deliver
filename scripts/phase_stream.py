@@ -39,6 +39,9 @@ from scripts.webbridge_client import (
     navigate, snapshot_page, click,
 )
 from scripts.config_v3 import load_profile
+from scripts.account_browser import verify_identity, guarded_script
+from scripts.webbridge_client import evaluate_once
+from scripts.accounts import metadata, assert_workdir
 from scripts.env_check import check_env
 from scripts.runtime import atomic_write_text, salary_range_k
 
@@ -92,7 +95,7 @@ def scroll_jobs_list(session=SESSION, times=1):
                 }
                 window.scrollTo(0, document.body.scrollHeight);
             }
-        })()""")
+        })()""", session=session)
         time.sleep(1.2)
 
 
@@ -120,9 +123,9 @@ def read_jd(job, session=SESSION):
         safe_close_popup(session)
     jid = job.get("jobId")
     sel = f'a[href*="job_detail/{jid}"]'
-    r = click(sel)
+    r = click(sel, session=session)
     time.sleep(3)
-    return evaluate(JD_JS) or ""
+    return evaluate(JD_JS, session=session) or ""
 
 
 # ═══════════════════════════════════════════════════════════
@@ -279,11 +282,11 @@ def _click_text(text_sub, session=SESSION):
         for(var i=0;i<all.length;i++){ var el=all[i];
             if(el.children.length===0 && (el.textContent||'').trim()===t){ el.id='__txtbtn__'; return 'tagged'; } }
         return 'NO';
-    })()""" % json.dumps(text_sub))
+    })()""" % json.dumps(text_sub), session=session)
     if tag != 'tagged':
         return 'NO:'+text_sub
-    ok = click('#__txtbtn__')
-    evaluate(r"(function(){var e=document.getElementById('__txtbtn__'); if(e) e.removeAttribute('id');})()")
+    ok = click('#__txtbtn__', session=session)
+    evaluate(r"(function(){var e=document.getElementById('__txtbtn__'); if(e) e.removeAttribute('id');})()", session=session)
     time.sleep(1.2)
     return ('CLICKED:'+text_sub) if ok else 'CLICK_FAIL'
 
@@ -294,14 +297,14 @@ def auto_handle_popups(session, max_rounds=6):
         ptype = read_popup_type(session)
         last_type = ptype
         if ptype == "":
-            return json.loads(evaluate(POPUP_STATE_JS) or "{}"), "clean", ""
+            return json.loads(evaluate(POPUP_STATE_JS, session=session) or "{}"), "clean", ""
         if ptype == "daily_limit":
-            return json.loads(evaluate(POPUP_STATE_JS) or "{}"), "limit", "daily_limit"
+            return json.loads(evaluate(POPUP_STATE_JS, session=session) or "{}"), "limit", "daily_limit"
         if ptype in ("not_interested", "unknown"):
-            return json.loads(evaluate(POPUP_STATE_JS) or "{}"), "danger", ptype
+            return json.loads(evaluate(POPUP_STATE_JS, session=session) or "{}"), "danger", ptype
         safe_close_popup(session)
         time.sleep(0.8)
-    return json.loads(evaluate(POPUP_STATE_JS) or "{}"), "forced", last_type
+    return json.loads(evaluate(POPUP_STATE_JS, session=session) or "{}"), "forced", last_type
 
 
 CLICK_CHAT_JS = r"""
@@ -339,7 +342,7 @@ def _feedback(label, session=SESSION):
     btn = ""
     ptype = ""
     try:
-        d = json.loads(evaluate(POPUP_STATE_JS) or "{}")
+        d = json.loads(evaluate(POPUP_STATE_JS, session=session) or "{}")
         btn = d.get("btn", "")
         ptype = read_popup_type(session)
     except Exception:
@@ -378,9 +381,9 @@ def _select_card_on_recommend(jid, session=SESSION, max_scroll=10):
             var el=document.querySelector('a[href*="job_detail/%s"]');
             if(el){ el.scrollIntoView({block:'center'}); }
             return !!el;
-        })()""" % jid)
+        })()""" % jid, session=session)
         time.sleep(0.8)
-        ok = click(sel)
+        ok = click(sel, session=session)
         if ok:
             time.sleep(2.0)
             return True
@@ -395,7 +398,7 @@ def _select_card_on_recommend(jid, session=SESSION, max_scroll=10):
                 }
             }
             window.scrollBy(0,800);
-        })()""" % jid)
+        })()""" % jid, session=session)
         time.sleep(1.2)
     return False
 
@@ -438,7 +441,7 @@ def _verify_delivered_on_page(session=SESSION, jid=""):
 def card_exists(jid, session=SESSION):
     """当前 DOM 中是否存在目标岗位的卡片链接（用于判断该岗在当前页是否可定位）。"""
     sel = f'a[href*="job_detail/{jid}"]'
-    r = evaluate(f'(function(){{return !!document.querySelector({json.dumps(sel)});}})()')
+    r = evaluate(f'(function(){{return !!document.querySelector({json.dumps(sel)});}})()', session=session)
     return str(r).strip().lower() in ("true", "1", "yes")
 
 
@@ -470,6 +473,7 @@ def _try_locate_card(jid, title, session=SESSION, max_rounds=12):
 
 
 def deliver_click(job, session=SESSION, auto=True):
+    verify_identity()
     """Send once; count only explicit success feedback. Ambiguous sends stop for review."""
     jid, title = job.get("jobId"), (job.get("title") or "").strip()
     prior = read_popup_type(session)
@@ -484,7 +488,8 @@ def deliver_click(job, session=SESSION, auto=True):
     anomaly, reason = detect_page_anomaly(session=session, check_blank=False)
     if anomaly:
         raise AbortScriptError(reason)
-    clicked = evaluate(CLICK_CHAT_JS, session=session)
+    verify_identity()
+    clicked = evaluate_once(guarded_script(CLICK_CHAT_JS), session=session)
     if not str(clicked).startswith("CLICKED:"):
         return {"delivered_ok": False, "reason": "未找到立即沟通按钮"}
     time.sleep(1.5)
@@ -539,7 +544,7 @@ def deliver_click(job, session=SESSION, auto=True):
 
 def verify_delivered(session=SESSION):
     try:
-        d = json.loads(evaluate(VERIFY_DELIVERED_JS) or "{}")
+        d = json.loads(evaluate(VERIFY_DELIVERED_JS, session=session) or "{}")
         ok = d.get("delivered", False)
         detail = f"btn={d.get('btn','')} delivery={d.get('hasDelivery',False)}"
     except Exception:
@@ -589,6 +594,7 @@ def run_verify(workdir, session=SESSION):
 # 收尾闭环：投递成果汇报（自包含 HTML）
 # ───────────────────────────────────────────────────────────
 def write_summary_page(workdir, profile=None):
+    assert_workdir(workdir)
     """Generate an escaped, sponsor-free report from saved records without asserting missing verification."""
     import re, datetime
     from html import escape
@@ -645,6 +651,9 @@ def write_summary_page(workdir, profile=None):
     floor_txt = f"{floor}K" if floor else "—"
     low_note = (f"<br><b class='warn'>注意：</b>有 {len(low)} 份薪资下限低于门槛 {esc(floor_txt)}，请人工核对。"
                 if low else "")
+    account = metadata() or data.get('account_context', {})
+    account_line = (f"账户：{esc(account.get('account'))} ｜ 浏览器：{esc(account.get('browser'))}"
+                    f" ｜ 运行：{esc(account.get('run'))}<br>" if account else '')
     html = f"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BOSS 投递成果汇报 · 本轮 {total} 份</title>
@@ -672,7 +681,7 @@ tr:hover td{{background:#f7faff}}
 </style></head><body>
 <div class="wrap">
 <h1>📊 BOSS 直聘 · 本轮投递成果汇报</h1>
-<div class="sub">生成时间：{now} ｜ 工作地：{esc(city)} ｜ 薪资门槛：≥{esc(floor_txt)} ｜ 流程：推荐页优先 + 关键词补刀 + AI 语义终审</div>
+<div class="sub">{account_line}生成时间：{now} ｜ 工作地：{esc(city)} ｜ 薪资门槛：≥{esc(floor_txt)} ｜ 流程：推荐页优先 + 关键词补刀 + AI 语义终审</div>
 <div class="banner"><div class="big">投递记录 {total} 份</div><div class="small">{verification_summary}· 覆盖 {len(order)} 个方向</div></div>
 <div class="card">
 <div class="pills">{cats_summary}</div>
@@ -737,7 +746,7 @@ DAILY_LIMIT_JS = r"""
 
 def detect_daily_limit(session=SESSION):
     try:
-        d = json.loads(evaluate(DAILY_LIMIT_JS) or "{}")
+        d = json.loads(evaluate(DAILY_LIMIT_JS, session=session) or "{}")
         hit = d.get("hit")
         return bool(hit), hit or ""
     except Exception:

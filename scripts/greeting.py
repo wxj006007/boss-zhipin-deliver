@@ -6,6 +6,7 @@ import json
 import time
 
 from scripts.webbridge_client import evaluate, evaluate_once, navigate, SESSION
+from scripts.account_browser import verify_identity, guarded_script
 
 
 def validate_greeting(message):
@@ -85,8 +86,12 @@ CHAT_JS = r"""
 
 
 def chat_action(jid, action="read", message="", session=SESSION):
+    if action in ('fill', 'send'):
+        verify_identity()
     payload = json.dumps({"jid": jid, "action": action, "message": message}, ensure_ascii=True)
     code = CHAT_JS.replace("PAYLOAD", payload, 1)
+    if action in ('fill', 'send'):
+        code = guarded_script(code)
     run = evaluate if action == "read" else evaluate_once
     return json.loads(run(code, session=session) or "{}")
 
@@ -121,7 +126,8 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
     # Unknown dialogs are safe to reject before initiating any communication.
     if ps.read_popup_type(session):
         return {"delivered_ok": False, "stopped": True, "reason": "沟通前有弹窗，请先核对"}
-    clicked = evaluate_once(ps.CLICK_CHAT_JS, session=session)
+    verify_identity()
+    clicked = evaluate_once(guarded_script(ps.CLICK_CHAT_JS), session=session)
     if not str(clicked).startswith("CLICKED:"):
         return {"delivered_ok": False, "reason": "未找到立即沟通按钮"}
 

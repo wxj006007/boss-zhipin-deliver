@@ -14,6 +14,16 @@ from scripts import phase_stream as ps
 from scripts import pipeline_batch as batch
 
 
+def setUpModule():
+    import os
+    from scripts import accounts
+    stack = ExitStack()
+    unittest.addModuleCleanup(stack.close)
+    folder = stack.enter_context(tempfile.TemporaryDirectory())
+    stack.enter_context(patch.object(accounts, 'CONTROL_DIR', Path(folder)))
+    stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
+
+
 class MergeTests(unittest.TestCase):
     def test_open_recovers_card_outside_initial_dom_and_reads_target_jd(self):
         with patch.object(drv, "evaluate", side_effect=[False, "正确岗位JD", "岗位标题"]), \
@@ -106,6 +116,7 @@ class MergeTests(unittest.TestCase):
             stack.enter_context(patch.object(ps, "_try_locate_card", return_value="ok"))
             stack.enter_context(patch.object(ps, "detect_page_anomaly", return_value=(False, "")))
             stack.enter_context(patch.object(ps, "evaluate", return_value="CLICKED:A"))
+            stack.enter_context(patch.object(ps, "evaluate_once", return_value="CLICKED:A"))
             stack.enter_context(patch.object(ps, "_feedback", return_value=("/web/geek/jobs", "", "", False)))
             stack.enter_context(patch.object(ps.time, "sleep"))
             result = ps.deliver_click({"jobId": "job-a"})

@@ -23,6 +23,9 @@ import os
 import glob
 import fnmatch
 import argparse
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scripts.accounts import assert_workdir
 
 # 永远不动的文件 / 模式
 PRESERVE_FILES = set()
@@ -43,6 +46,7 @@ def run_cleanup(work_dir=None, dry_run=False, quiet=False):
     """清空运行态缓存，返回删除条目数"""
     if work_dir is None:
         work_dir = os.getcwd()
+    assert_workdir(work_dir)
     deleted = []
 
     # 1) 清空候选子目录内容（保留目录本身）

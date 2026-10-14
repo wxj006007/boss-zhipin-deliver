@@ -8,6 +8,10 @@ DEFAULT_WORKDIR = "D:/Dev/code/my_github/boss-zhipin-assistant/boss-data"
 
 
 def resolve_workdir(value=None):
+    from scripts.accounts import context, assert_workdir
+    ctx = context()
+    if ctx:
+        return assert_workdir(os.path.abspath(value or ctx['workdir']))
     value = value or os.environ.get("BOSS_WORKDIR") or DEFAULT_WORKDIR
     return os.path.abspath(os.path.expanduser(value))
 

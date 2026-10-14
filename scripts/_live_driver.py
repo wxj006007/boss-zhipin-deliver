@@ -86,6 +86,7 @@ from scripts.webbridge_client import (
 from scripts.config_v3 import load_profile
 from scripts.greeting import deliver_greeting, load_greeting, validate_greeting
 from scripts.runtime import resolve_workdir, atomic_write_json
+from scripts.account_browser import verify_identity
 
 WORKDIR = resolve_workdir()
 STATE_FILE = os.path.join(WORKDIR, "walk_state.json")
@@ -95,6 +96,9 @@ def load_profile_cached():
     try:
         return load_profile()
     except Exception:
+        from scripts.accounts import context
+        if context():
+            raise
         return {}
 
 
@@ -404,6 +408,7 @@ def cmd_open(jid):
 
 
 def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=None):
+    verify_identity()
     """Deliver ONE live card by jid. Job metadata (company/salary/industry/
     direction) is taken from simple positional args (shell-safe, no JSON).
 

@@ -11,6 +11,16 @@ from scripts import page_scan as scan
 from scripts import pipeline_batch as batch
 
 
+def setUpModule():
+    import os
+    from scripts import accounts
+    stack = ExitStack()
+    unittest.addModuleCleanup(stack.close)
+    folder = stack.enter_context(tempfile.TemporaryDirectory())
+    stack.enter_context(patch.object(accounts, 'CONTROL_DIR', Path(folder)))
+    stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
+
+
 class SamePageTests(unittest.TestCase):
     def test_collection_does_not_filter_profession_grade_or_company_size(self):
         jobs = [dict(jobId='a', title='2027届市场运营', scale='20-99人'),

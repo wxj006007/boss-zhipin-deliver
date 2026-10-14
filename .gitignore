@@ -11,3 +11,5 @@ user_profile.json
 boss_applied.json
 .workbuddy/
 boss-data/
+.account-runtime/
+accounts/

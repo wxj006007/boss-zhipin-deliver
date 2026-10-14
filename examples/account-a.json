@@ -1,0 +1,9 @@
+{
+  "account": "a",
+  "browser": "edge",
+  "bridge": {"host": "127.0.0.1", "port": 10087},
+  "session": "boss-a",
+  "profile": "../accounts/a/profile.json",
+  "workdir": "../accounts/a/data",
+  "expected_identity": null
+}

@@ -1,5 +1,6 @@
 """Offline checks: never connect to BOSS or send a real message."""
 import json
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import shutil
@@ -228,6 +229,15 @@ class IntegrationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     batch.cmd_go(path)
                 nav.assert_not_called()
+
+
+def setUpModule():
+    from scripts import accounts
+    stack = ExitStack()
+    unittest.addModuleCleanup(stack.close)
+    folder = stack.enter_context(tempfile.TemporaryDirectory())
+    stack.enter_context(patch.object(accounts, 'CONTROL_DIR', Path(folder)))
+    stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
 
 
 # Execute the actual browser JavaScript against a minimal DOM fixture with Node.

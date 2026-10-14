@@ -36,22 +36,26 @@ import signal
 import difflib
 import glob
 import subprocess
+from contextvars import ContextVar
 from datetime import datetime
 try:
     from .runtime import atomic_write_json
 except ImportError:
     from runtime import atomic_write_json
+from scripts.accounts import context, assert_route, assert_run, assert_workdir, metadata
 
 # ═══════════════════════════════════════════════════════════
 # 常量
 # ═══════════════════════════════════════════════════════════
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 10086
+_ACCOUNT = context() or {}
+DEFAULT_HOST = _ACCOUNT.get('host', "127.0.0.1")
+DEFAULT_PORT = _ACCOUNT.get('port', 10086)
+_ROUTE = ContextVar('webbridge_route', default=None)
 
 # ★ 全局唯一 SESSION — 所有脚本共用一个标签页
 #   禁止在各脚本中自定义 SESSION 名
-SESSION = "boss-main"
+SESSION = _ACCOUNT.get('session', "boss-main")
 
 DEFAULT_TIMEOUT = 60
 MAX_RETRIES = 3
@@ -88,10 +92,14 @@ def parse_salary_max(value):
 # 模块级 API 函数（自带重试）
 # ═══════════════════════════════════════════════════════════
 
-def api(action, args=None, session=SESSION, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=DEFAULT_TIMEOUT, retries=MAX_RETRIES):
+def api(action, args=None, session=SESSION, host=None, port=None, timeout=DEFAULT_TIMEOUT, retries=MAX_RETRIES):
     """发送 WebBridge API 请求，返回解析后的 dict。自带 MAX_RETRIES 次重试。"""
     if args is None:
         args = {}
+    route = _ROUTE.get() or (DEFAULT_HOST, DEFAULT_PORT, SESSION)
+    host, port = host or route[0], port or route[1]
+    session = route[2] if session == SESSION else session
+    assert_route(host, port, session)
     last_error = None
     for attempt in range(retries):
         conn = None
@@ -302,6 +310,8 @@ def kill_other_boss_scripts():
 
     返回被杀死的 pid 列表。
     """
+    if assert_run():
+        raise RuntimeError('账户模式通过串行占用管理任务，禁止清场其他进程')
     killed = []
     for pid in _list_other_boss_script_pids():
         try:
@@ -566,9 +576,14 @@ class ProgressManager:
         self.data = {"delivered": [], "failed": [], "blocked": []}
 
     def load(self):
+        assert_workdir(os.path.dirname(os.path.abspath(self.filepath)))
         if os.path.exists(self.filepath):
             with open(self.filepath, 'r', encoding='utf-8') as f:
                 self.data = json.load(f)
+        ctx = context()
+        saved_account = self.data.get('account_context', {}).get('account')
+        if ctx and saved_account and saved_account != ctx['account']:
+            raise ValueError('投递历史属于另一账户，停止以免混用去重记录')
         # 兼容旧数据：被日上限拦截的岗位曾误记在 failed（reason 含"日上限"），
         # 自愈归位到 blocked —— blocked 不计入 is_done，明日配额重置后可重试
         self.data.setdefault("blocked", [])
@@ -586,6 +601,9 @@ class ProgressManager:
         return self
 
     def save(self):
+        assert_workdir(os.path.dirname(os.path.abspath(self.filepath)))
+        if metadata():
+            self.data['account_context'] = metadata()
         atomic_write_json(self.filepath, self.data)
 
     @property
@@ -615,6 +633,7 @@ class ProgressManager:
         self.data["uncertain"] = [j for j in self.data.get("uncertain", []) if j.get("jobId") != job_id]
         record = dict(job)
         record.update(jobId=job_id, result="success")
+        record.update(metadata())
         rows = self.data.setdefault("delivered", [])
         for previous in rows:
             if previous.get("jobId") == job_id:
@@ -625,6 +644,7 @@ class ProgressManager:
 
     def add_uncertain(self, job_id, job, reason):
         record = dict(job, jobId=job_id, result="uncertain", reason=reason, verify=False)
+        record.update(metadata())
         rows = self.data.setdefault("uncertain", [])
         for previous in rows:
             if previous.get("jobId") == job_id:
@@ -639,6 +659,7 @@ class ProgressManager:
             'company': job.get('company', ''),
             'result': 'fail',
             'reason': reason,
+            **metadata(),
         })
 
     def add_blocked(self, job_id, job, reason):
@@ -649,6 +670,7 @@ class ProgressManager:
             'company': job.get('company', ''),
             'result': 'blocked',
             'reason': reason,
+            **metadata(),
         })
 
     @property
@@ -668,9 +690,11 @@ class ProgressManager:
 # 健康检查与 Daemon 管理
 # ═══════════════════════════════════════════════════════════
 
-def health_check(host=DEFAULT_HOST, port=DEFAULT_PORT):
+def health_check(host=None, port=None):
     """快速检查 WebBridge daemon 是否可达"""
     try:
+        route = _ROUTE.get() or (DEFAULT_HOST, DEFAULT_PORT, SESSION)
+        host, port = host or route[0], port or route[1]
         conn = http.client.HTTPConnection(host, port, timeout=5)
         conn.request("GET", "/")
         status = conn.getresponse().status
@@ -710,6 +734,8 @@ def ensure_active_tab(session=SESSION, timeout_wait=10):
 
 def clean_pid_files():
     """清理 WebBridge / WorkBuddy PID 残留文件"""
+    if assert_run():
+        raise RuntimeError('账户模式禁止清理公共 PID 文件')
     pid_patterns = [
         os.path.expanduser("~/.kimi-webbridge/daemon.pid"),
         os.path.expanduser("~/.kimi-webbridge*.pid"),
@@ -773,17 +799,27 @@ class WebBridge:
     def api(self, action, args=None, timeout=None):
         return api(action, args, self.session, self.host, self.port, timeout or self.timeout)
 
+    def health_check(self):
+        return health_check(self.host, self.port)
+
     def evaluate(self, code):
-        return evaluate(code, self.session)
+        return self._using(evaluate, code, self.session)
+
+    def _using(self, function, *args):
+        token = _ROUTE.set((self.host, self.port, self.session))
+        try:
+            return function(*args)
+        finally:
+            _ROUTE.reset(token)
 
     def navigate(self, url, wait_range=(4, 6)):
-        return navigate(url, wait_range, self.session)
+        return self._using(navigate, url, wait_range, self.session)
 
     def click(self, selector):
-        return click(selector, self.session)
+        return self._using(click, selector, self.session)
 
     def scroll_page(self):
-        return scroll_page(self.session)
+        return self._using(scroll_page, self.session)
 
     def snapshot(self):
         return self.api("snapshot", {})
@@ -804,13 +840,13 @@ class WebBridge:
         return self.api("close_tab", {"tabId": tab_id})
 
     def extract_jobs(self):
-        return extract_jobs(self.session)
+        return self._using(extract_jobs, self.session)
 
     def handle_popup(self):
-        return handle_popup(self.session)
+        return self._using(handle_popup, self.session)
 
     def ensure_active_tab(self, timeout_wait=10):
-        return ensure_active_tab(self.session, timeout_wait)
+        return self._using(ensure_active_tab, self.session, timeout_wait)
 
     def verify_login(self, username=None):
         """通用登录态检测（v5 泛用化：不再绑定特定用户名）。
