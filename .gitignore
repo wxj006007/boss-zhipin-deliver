@@ -9,3 +9,5 @@ __pycache__/
 *.bak-*
 user_profile.json
 boss_applied.json
+.workbuddy/
+boss-data/

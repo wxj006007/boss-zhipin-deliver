@@ -8,6 +8,7 @@
 用法:
   python pipeline_batch.py jdc <jid...>     只拉 JD 正文（复核届别/学历/是否外包）
   python pipeline_batch.py go decisions.json 执行投递
+  python pipeline_batch.py go decisions.json --current-page 只在当前关键词页执行，不重新导航
   python pipeline_batch.py ls [kw]           查看候选池（可按来源关键词过滤）
 
 decisions.json:
@@ -17,7 +18,7 @@ workdir 取环境变量 BOSS_WORKDIR，缺省统一为本机技能工作目录�
 """
 import sys, os, json, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs
 from scripts import webbridge_client as wb
 from scripts import _live_driver as drv
 from scripts.runtime import resolve_workdir, atomic_write_json
@@ -91,7 +92,22 @@ def cmd_jdc(jids):
     atomic_write_json(os.path.join(WORKDIR, "jd_cache.json"), out)
 
 
-def cmd_go(path):
+def use_current_page(pool, jids):
+    """Validate every decision before any navigation, rejection or send."""
+    from scripts import phase_stream as ps
+    current = wb.evaluate("window.location.href") or ""
+    parsed = urlparse(current)
+    keyword = parse_qs(parsed.query).get("query", [""])[0]
+    if (parsed.hostname != "www.zhipin.com" or parsed.path.rstrip('/') != "/web/geek/jobs"
+            or not keyword or any(jid not in pool or pool[jid].get('_kw') != keyword for jid in jids)):
+        raise ValueError("当前页与决策来源不一致；请重新采集审核，不自动跳页")
+    anomaly, reason = wb.detect_page_anomaly(check_blank=False)
+    if anomaly:
+        raise wb.AbortScriptError(reason)
+    ps.CURRENT_WORK_URL["url"] = current
+
+
+def cmd_go(path, current_page=False):
     pool = load_pool()
     with open(path, encoding="utf-8") as f:
         dec = json.load(f)
@@ -106,9 +122,12 @@ def cmd_go(path):
             raise ValueError("提供 greetings 时，每个待投岗位都必须有专属招呼语")
         greetings = {jid: validate_greeting(greetings[jid]) for jid in delivers}
     res = {"delivered": [], "failed": [], "rejected": [], "skipped": [], "stopped": False}
+    if current_page:
+        use_current_page(pool, delivers + list(rejects))
     try:
         for kw, ids in group_by_kw(pool, delivers + list(rejects)).items():
-            goto(kw)
+            if not current_page:
+                goto(kw)
             for jid in ids:
                 meta = pool[jid]
                 if jid in rejects:
@@ -156,6 +175,11 @@ if __name__ == "__main__":
     if a == "jdc":
         cmd_jdc(sys.argv[2:])
     elif a == "go":
-        cmd_go(sys.argv[2])
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument('decisions')
+        parser.add_argument('--current-page', action='store_true')
+        args = parser.parse_args(sys.argv[2:])
+        cmd_go(args.decisions, current_page=args.current_page)
     else:
         cmd_ls(sys.argv[2] if len(sys.argv) > 2 else "")
