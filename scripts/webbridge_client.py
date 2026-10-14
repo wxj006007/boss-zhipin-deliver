@@ -43,6 +43,7 @@ try:
 except ImportError:
     from runtime import atomic_write_json
 from scripts.accounts import context, assert_route, assert_run, assert_workdir, metadata
+from scripts.hr_activity import ACTIVITY_HELPER_JS
 
 # ═══════════════════════════════════════════════════════════
 # 常量
@@ -374,6 +375,7 @@ def read_tab_lock():
 # Vue $props.data 提取（首选，字段最完整）
 _EXTRACT_JOBS_VUE_JS = r"""
 (function(){
+    ACTIVITY_HELPER
     var cards = document.querySelectorAll('.job-card-wrap');
     var jobs = [];
     var seen = new Set();
@@ -393,6 +395,7 @@ _EXTRACT_JOBS_VUE_JS = r"""
                 scale: d.brandScaleName || "",
                 stage: d.brandStageName || "",
                 online: !!d.bossOnline,
+                hr_activity: bossActivity(cards[i], d, 'card'),
                 welfare: (d.welfareList || []).join("|"),
                 degree: d.jobDegree || "",
                 experience: d.jobExperience || "",
@@ -402,7 +405,7 @@ _EXTRACT_JOBS_VUE_JS = r"""
     }
     return JSON.stringify({total: jobs.length, list: jobs});
 })()
-"""
+""".replace('ACTIVITY_HELPER', ACTIVITY_HELPER_JS)
 
 # DOM 兜底提取（v4 新增）：Vue 私有 API 失效时改用已验证选择器
 #   公司名 → .boss-name  （不是 .company-name）
@@ -410,6 +413,7 @@ _EXTRACT_JOBS_VUE_JS = r"""
 #   标题   → a.job-name（含 href /job_detail/{jobId}.html）
 _EXTRACT_JOBS_DOM_JS = r"""
 (function(){
+    ACTIVITY_HELPER
     var links = document.querySelectorAll('a[href*="job_detail"]');
     var jobs = [];
     var seen = {};
@@ -421,7 +425,7 @@ _EXTRACT_JOBS_DOM_JS = r"""
         var jid = m ? m[1] : '';
         if (!jid || seen[jid]) continue;
         seen[jid] = 1;
-        var card = a.closest('li') || a.parentElement;
+        var card = a.closest('.job-card-wrap') || a.closest('li') || a.parentElement;
         var salary = '', company = '', location = '';
         if (card) {
             var salEl = card.querySelector('.job-salary') || card.querySelector('[class*="salary"]');
@@ -434,12 +438,13 @@ _EXTRACT_JOBS_DOM_JS = r"""
         jobs.push({
             title: title, salary: salary, city: location, company: company,
             industry: '', scale: '', stage: '', online: false,
+            hr_activity: bossActivity(card, {}, 'card_dom'),
             welfare: '', degree: '', experience: '', jobId: jid, href: href,
         });
     }
     return JSON.stringify({total: jobs.length, list: jobs});
 })()
-"""
+""".replace('ACTIVITY_HELPER', ACTIVITY_HELPER_JS)
 
 
 def _parse_jobs(raw):

@@ -2,6 +2,8 @@
 
 每个账户使用独立配置、画像副本和数据目录。一轮运行中配置与画像固定，另一轮才读取修改后的画像。第一版只有一个投递任务能处于开始状态；两个浏览器及桥接服务可以同时打开。
 
+HR 活跃度也随账户画像保存：`"hr_activity_filter": {"mode": "today", "unknown": "allow"}` 表示今天活跃可投，信息未知继续按岗位匹配判断。卡片离线不直接剔除，详情页补读后在点击沟通前复核；不符合时单列 `activity_skipped`，不计投递失败且以后可再次评估。未配置或 `mode: "off"` 保持原行为。配置更新从下一轮 begin 生效。
+
 ## 一次性准备
 
 本机配置位于 `accounts/a/account.json`（Edge）和 `accounts/b/account.json`（Chrome），画像各自在同目录的 `profile.json`。两个画像只在初始化时从原画像复制，之后没有同步关系。个人文件和 `.account-runtime/` 都已排除在 Git 之外。新安装参考 `examples/account-a.json`、`examples/account-b.json` 和空白画像 `examples/profile.json`；根据实际用户填写，不发送示例内容。

@@ -7,6 +7,7 @@ import time
 
 from scripts.webbridge_client import evaluate, evaluate_once, navigate, SESSION
 from scripts.account_browser import verify_identity, guarded_script
+from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 
 
 def validate_greeting(message):
@@ -127,6 +128,10 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
     if ps.read_popup_type(session):
         return {"delivered_ok": False, "stopped": True, "reason": "沟通前有弹窗，请先核对"}
     verify_identity()
+    activity = check_activity(jid, session)
+    job['hr_activity'] = activity
+    if not activity['allowed']:
+        return activity_skip_result(activity)
     clicked = evaluate_once(guarded_script(ps.CLICK_CHAT_JS), session=session)
     if not str(clicked).startswith("CLICKED:"):
         return {"delivered_ok": False, "reason": "未找到立即沟通按钮"}

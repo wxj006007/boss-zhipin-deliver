@@ -6,5 +6,6 @@
   "city_code": "",
   "min_salary_k": 0,
   "prefer": [],
-  "avoid": []
+  "avoid": [],
+  "hr_activity_filter": {"mode": "off", "unknown": "allow"}
 }

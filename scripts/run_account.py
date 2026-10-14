@@ -49,6 +49,8 @@ def begin(config):
     profile = ac.read_json(config['profile'])
     if not isinstance(profile, dict) or not str(profile.get('role_summary', '')).strip():
         raise ValueError('先填写真实账户画像，至少包含 role_summary')
+    from scripts.hr_activity import policy as activity_policy
+    activity_policy(profile)
     if not config.get('expected_identity'):
         raise ValueError('先 inspect 核对身份，再 bind；尚未绑定账户')
     verify_identity(config, prepare=True)

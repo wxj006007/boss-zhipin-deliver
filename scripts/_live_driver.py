@@ -87,6 +87,7 @@ from scripts.config_v3 import load_profile
 from scripts.greeting import deliver_greeting, load_greeting, validate_greeting
 from scripts.runtime import resolve_workdir, atomic_write_json
 from scripts.account_browser import verify_identity
+from scripts.hr_activity import decide as activity_decision, check_current as check_activity, record_skip as record_activity_skip, skip_result as activity_skip_result
 
 WORKDIR = resolve_workdir()
 STATE_FILE = os.path.join(WORKDIR, "walk_state.json")
@@ -111,7 +112,7 @@ def profile_min_salary(profile):
 
 
 def mechanical_ok(job, profile):
-    """Only the two unambiguous hard gates: city + salary.
+    """City and salary checks; the separate optional activity gate runs afterward.
 
     Direction (is this a real hotel/tourism role?) is intentionally NOT decided
     here — that is the agent's job, done after reading the JD. Keeping this
@@ -220,9 +221,10 @@ def _present_next():
 
     游标推进：last_jid 锚定优先（在"当前 DOM 列表"里定位上次呈现卡的位置再 +1，
     对 BOSS 列表动态重排鲁棒），锚不到退回数字游标 idx。
-    机械跳过两类卡（不交给智能体做方向判断）：
+    机械跳过以下卡（不交给智能体做方向判断）：
       ① 城市/薪资硬门槛不过关（mechanical_ok=False）
       ② 已投递（stream_progress 去重）
+      ③ 用户启用活跃度规则且卡片明确不符合（不在线但时间未知时继续读详情）
     智能体只见这一张：表面命中 → open <jobId> 读JD→判→deliver；不命中 → walk --next 跳过。
     """
     profile = load_profile_cached()
@@ -297,6 +299,12 @@ def _present_next():
             skipped.append({"i": i, "reason": m["reason"]})
             i += 1
             continue
+        activity = activity_decision(job.get('hr_activity'), profile)
+        if not activity['allowed']:
+            record_activity_skip(WORKDIR, job, activity, 'card')
+            skipped.append({'i': i, 'jobId': jid, 'reason': activity['reason'], 'hr_activity': activity})
+            i += 1
+            continue
         # 呈现这一张（仅这一张）→ 推进游标
         st["idx"] = i + 1
         st["last_jid"] = jid
@@ -307,7 +315,8 @@ def _present_next():
                     "company": job.get("company", ""),
                     "salary": job.get("salary"), "city": job.get("city"),
                     "industry": job.get("industry"),
-                    "scale": job.get("scale", ""), "stage": job.get("stage", "")},
+                    "scale": job.get("scale", ""), "stage": job.get("stage", ""),
+                    "hr_activity": job.get('hr_activity'), "activity_check": activity},
             "mech": m,
             "auto_skipped_mech": skipped,
             "visible_total": len(jobs),
@@ -404,7 +413,9 @@ def cmd_open(jid):
                 "not_found": located == "absent", "location_status": located}
     detail = evaluate("""(function(){var d=document.querySelector('.job-detail-box')||document.querySelector('#main .job-detail');return d?d.innerText:'';})()""")
     title = evaluate("""(()=>{const d=document.querySelector('.job-detail-box')||document.querySelector('#main .job-detail');return d?.querySelector('.job-name')?.innerText.trim()||''})()""")
-    return {"clicked": ok, "panel_ok": panel_ok, "detail": detail if panel_ok else "", "title": title if panel_ok else ""}
+    activity = check_activity(jid, SESSION, load_profile_cached())
+    return {"clicked": ok, "panel_ok": panel_ok, "detail": detail if panel_ok else "", "title": title if panel_ok else "",
+            "hr_activity": activity}
 
 
 def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=None):
@@ -445,6 +456,11 @@ def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=
         return {"delivered_ok": False, "reason": "未读取到当前岗位JD，不发送自定义招呼语"}
     job = {"jobId": jid, "title": op.get("title", ""), "company": company,
            "salary": salary, "industry": industry, "direction": direction, "city": ""}
+    if op.get('hr_activity'):
+        job['hr_activity'] = op['hr_activity']
+        if not op['hr_activity']['allowed']:
+            record_activity_skip(WORKDIR, job, op['hr_activity'], 'detail')
+            return activity_skip_result(op['hr_activity'])
     if greeting is not None:
         job["greeting"] = greeting
         # Persist before initiating communication, including across process crashes.
@@ -466,6 +482,9 @@ def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=
         # protection on disk before that write.
         if not res.get("delivered_ok"):
             pm.save()
+    if res.get('activity_filtered'):
+        record_activity_skip(WORKDIR, job, res['hr_activity'], 'before_contact')
+        return res
     if res.get("uncertain"):
         pm.add_uncertain(jid, job, res.get("reason", "送达未确认，需核对"))
         pm.save()

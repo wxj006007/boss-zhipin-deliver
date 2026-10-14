@@ -42,6 +42,7 @@ from scripts.config_v3 import load_profile
 from scripts.account_browser import verify_identity, guarded_script
 from scripts.webbridge_client import evaluate_once
 from scripts.accounts import metadata, assert_workdir
+from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 from scripts.env_check import check_env
 from scripts.runtime import atomic_write_text, salary_range_k
 
@@ -489,6 +490,10 @@ def deliver_click(job, session=SESSION, auto=True):
     if anomaly:
         raise AbortScriptError(reason)
     verify_identity()
+    activity = check_activity(jid, session)
+    job['hr_activity'] = activity
+    if not activity['allowed']:
+        return activity_skip_result(activity)
     clicked = evaluate_once(guarded_script(CLICK_CHAT_JS), session=session)
     if not str(clicked).startswith("CLICKED:"):
         return {"delivered_ok": False, "reason": "未找到立即沟通按钮"}
@@ -643,9 +648,12 @@ def write_summary_page(workdir, profile=None):
     unverified = sum(j.get("verify") is False for j in delivered)
     unknown = total - verified - unverified
     uncertain = len(data.get("uncertain", []))
+    activity_skipped = len(data.get('activity_skipped', []))
     verification_summary = f"页面核验已确认 {verified} 份 · 未确认 {unverified} 份 · 未保存核验信息 {unknown} 份"
     if uncertain:
         verification_summary += f" · 另有 {uncertain} 份发送结果待人工核对"
+    if activity_skipped:
+        verification_summary += f" · 活跃度筛选跳过 {activity_skipped} 条记录（不计失败，可再次评估）"
 
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')
     floor_txt = f"{floor}K" if floor else "—"

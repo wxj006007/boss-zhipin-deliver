@@ -23,6 +23,7 @@ from scripts import webbridge_client as wb
 from scripts import _live_driver as drv
 from scripts.runtime import resolve_workdir, atomic_write_json
 from scripts.greeting import validate_greeting
+from scripts.hr_activity import display as display_activity
 
 WORKDIR = resolve_workdir()
 POOL = os.path.join(WORKDIR, "pool.json")
@@ -79,7 +80,7 @@ def cmd_jdc(jids):
                 txt = (op.get("detail") or "").replace("\n", " ⏎ ")
                 out[jid] = {"kw": kw, "company": meta.get("company"),
                             "title": meta.get("title"), "panel_ok": op.get("panel_ok"),
-                            "jd": txt}
+                            "jd": txt, "hr_activity": op.get('hr_activity')}
                 print(f"--- {jid} | {meta.get('company')} | {meta.get('title')}", flush=True)
                 print(f"    panel_ok={op.get('panel_ok')}", flush=True)
                 print(f"    JD: {txt}", flush=True)
@@ -121,7 +122,7 @@ def cmd_go(path, current_page=False):
         if not isinstance(greetings, dict) or any(jid not in greetings for jid in delivers):
             raise ValueError("提供 greetings 时，每个待投岗位都必须有专属招呼语")
         greetings = {jid: validate_greeting(greetings[jid]) for jid in delivers}
-    res = {"delivered": [], "failed": [], "rejected": [], "skipped": [], "stopped": False}
+    res = {"delivered": [], "failed": [], "rejected": [], "skipped": [], "activity_skipped": [], "stopped": False}
     if current_page:
         use_current_page(pool, delivers + list(rejects))
     try:
@@ -144,6 +145,9 @@ def cmd_go(path, current_page=False):
                     return res
                 if r.get("already_done"):
                     res["skipped"].append(jid)
+                elif r.get('activity_filtered'):
+                    res['skipped'].append(jid)
+                    res['activity_skipped'].append({'jobId': jid, 'reason': r['reason'], 'hr_activity': r['hr_activity']})
                 elif r.get("delivered_ok"):
                     res["delivered"].append(dict(meta, verify=r.get("verify") is True))
                 else:
@@ -167,7 +171,7 @@ def cmd_ls(kw_filter=""):
     print(f"pool={len(pool)} shown={len(rows)}")
     for j in sorted(rows, key=lambda x: (x.get("_kw") or "", x.get("company") or "")):
         print(f"  {j.get('jobId')} | [{j.get('_kw')}] | {j.get('company')} | {j.get('scale')} | "
-              f"{j.get('city')} | {j.get('title')} | {j.get('salary')} | {j.get('degree')}")
+              f"{j.get('city')} | {j.get('title')} | {j.get('salary')} | {j.get('degree')} | HR: {display_activity(j.get('hr_activity'))}")
 
 
 if __name__ == "__main__":

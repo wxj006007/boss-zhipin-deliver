@@ -28,6 +28,7 @@ from urllib.parse import quote
 from scripts import webbridge_client as wb
 from scripts.config_v3 import load_profile
 from scripts.runtime import resolve_workdir, atomic_write_json
+from scripts.hr_activity import display as display_activity
 
 def valid_jd(entry):
     return (isinstance(entry, dict) and entry.get("panel_ok") is True
@@ -103,7 +104,7 @@ def main():
                       "cards_total": len(seen), "available": len(rows)}, ensure_ascii=False))
     for j in rows:
         print(f"{j['jobId']}|{j.get('company')}|{j.get('scale')}|{j.get('city')}|"
-              f"{j.get('title')}|{j.get('salary')}|{j.get('degree')}")
+              f"{j.get('title')}|{j.get('salary')}|{j.get('degree')}|HR:{display_activity(j.get('hr_activity'))}")
 
     if len(sys.argv) > 5 and sys.argv[5] == "jd":
         from scripts import _live_driver as drv
@@ -131,6 +132,7 @@ def main():
                             "salary": j.get("salary"), "city": j.get("city"),
                             "degree": j.get("degree"), "scale": j.get("scale"),
                             "panel_ok": op.get("panel_ok"),
+                            "hr_activity": op.get('hr_activity'),
                             "jd": (op.get("detail") or "").replace("\n", " / ")}
             except wb.AbortScriptError:
                 atomic_write_json(cache_path, out)
