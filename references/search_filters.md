@@ -1,137 +1,141 @@
-# BOSS 搜索筛选码 与 批量投递模式（v6.11 新增）
+# 搜索筛选参数与兼容批量入口
 
-> 本文档记录 2026-10-12 实测确认的 **BOSS 搜索 URL 筛选码** 与 **整页批量投递** 方法。
-> 这两项把投递命中率从 ~20% 提升到接近 100%，并把「一次一张卡」的交互轮次压缩到 1/15。
+当前默认投递流程是 `immediate start → next → 智能体审核 → decide`，见 [SKILL.md](../SKILL.md)。本文件说明当前代码怎样组装搜索条件，以及用户明确选择批量或对照测试时仍可使用的入口。历史批次的命中率、交互轮数和卡片数量不作为当前性能承诺。
 
----
+## 1. 搜索条件如何进入 URL
 
-## 1. 搜索 URL 的筛选参数（关键：传「筛选码」，不是文案）
+搜索页使用：
 
-搜索页 URL：`https://www.zhipin.com/web/geek/jobs?query=<kw>&city=<code>&<filters>`
-
-**坑**：`scale` 传区间文案（`scale=1000-9999人`）会被 BOSS **静默忽略**，返回结果不筛选。
-必须传**枚举码**，多选时用逗号连接。
-
-### 求职类型 jobType
-
-| 码 | 含义 |
-|---|---|
-| `1901` | 全职 |
-| `1902` | **实习** ← 投实习岗必须带，否则结果被社招淹没 |
-| `1903` | 兼职 |
-| `0` / 省略 | 不限 |
-
-### 公司规模 scale（★ 中大厂硬筛选，命中率关键）
-
-| 码 | 含义 |
-|---|---|
-| `301` | 0-20人 |
-| `302` | 20-99人 |
-| `303` | 100-499人 |
-| `304` | 500-999人 ← 独角兽/明星创业常见档位（如智谱、第四范式、九识） |
-| `305` | 1000-9999人 ← 中厂主力（如得物、小红书、SHEIN） |
-| `306` | 10000人以上 ← 大厂（字节/腾讯/阿里/百度/小米/海康/快手） |
-
-**推荐组合**：`&scale=304,305,306` —— 单页 15 张卡基本全是中大厂，无需逐张读 JD 就能筛掉小微。
-
-### 其它筛选码（同页 `.filter-select-dropdown li[ka]` 可枚举）
-
-| 维度 | ka 前缀 | 已知码 |
-|---|---|---|
-| 薪资 | `sel-job-rec-salary-` | `402`…`407` |
-| 经验 | `sel-job-rec-exp-` | `108`…`102`（108=在校/应届） |
-| 学历 | `sel-job-rec-degree-` | `202`…`209` |
-| 融资阶段 | `sel-job-rec-stage-` | `801`…`808` |
-
-> 枚举方法（不用点开下拉）：
-> ```js
-> [...document.querySelectorAll('.filter-select-dropdown li[ka]')]
->   .map(li => li.getAttribute('ka'))
-> ```
-> 想拿到某个筛选的**规范 URL 写法**：用 JS `.click()` 勾选该 `li`，再读 `window.location.href`。
-
----
-
-## 2. 批量投递模式（整页判读，替代逐卡行走）
-
-### 为什么可以批量
-
-- BOSS 搜索结果**单页 15 张卡全部常驻 DOM**（非虚拟列表，无分页，滚动不增长）。
-- `cmd_open(jid)` / `cmd_deliver(jid)` 都用 `a[href*="job_detail/<jid>"]` 按 **jid 定位卡片**，
-  与 walk 游标无关；`deliver_click` 只在 `/web/geek/jobs` 路径内原地操作。
-- **结论**：只要卡片在**当前已加载的那一页**里，就能在同一次页面态内连续 reject/deliver。
-
-### 三段式流程（把 15 轮压缩成 3 轮）
-
-| 阶段 | 动作 | 命令 |
-|---|---|---|
-| ① 采集 | 多关键词 × `jobType=1902&scale=304,305,306` 轮扫，累积去重候选池 | `scripts/harvest_pool.py <keywords.json>` |
-| ② 分诊 | 按来源关键词分组 → 短名单拉 JD 正文（只对存疑的拉） | `scripts/pipeline_batch.py jdc <jid...>` |
-| ③ 执行 | 按分组 navigate → 页内批量 reject/deliver | `scripts/pipeline_batch.py go <decisions.json>` |
-
-`decisions.json` 形如 `{"deliver": ["jid1","jid2"], "reject": ["jid3"]}`。
-
-### 必须去重
-
-- **已投递去重**：`stream_progress.json.delivered[].jobId`（BOSS 也会把已投卡片从列表移除，但重排后可能再出现）。
-- **已判否去重**：`walk_state.json.rejected_jids`。
-- harvest 会自动过滤已投递项。
-
----
-
-## 3. 已知坑（实测）
-
-### 3.1 不要直连 `/wapi/zpgeek/search/joblist.json`
-
-该接口在页面内用同步 XHR 调用时**前 2 次成功**，之后连续返回 `code:37`，并把整站跳转到
-`/web/passport/zp/security.html?...code=37` 安全验证页（约 6 秒后自动放行并带回 `_security_check=1`）。
-**不要为了拿 30 条/页或分页去刷这个接口**——有账号风控风险。用页面 DOM 就够。
-
-### 3.2 同一关键词两次加载，卡片集**会变**
-
-BOSS 搜索结果是动态轮换的。`pipeline go` 失败常见原因是 `clicked:False` —— 即该卡**已不在 DOM**。
-表现为 `panel_ok:False` 且打印出的 JD 正文是**上一张卡**的残留内容（陈旧面板）。
-处理：重试一次；仍失败就放弃该卡，改用新关键词重新采一轮（不要反复硬怼同一个 jid）。
-
-### 3.3 卡片表面信息不足以判届别
-
-卡面 `degree` 只显示**最低学历**，JD 里可能写死更高要求（例：卡面"本科"、JD"硕士及以上"）。
-`工` 常见两种实习口径：
-
-| 措辞 | 含义 |
-|---|---|
-| `ByteIntern：面向2027届毕业生（2026.9–2027.8）` | 27届专属转正实习 → 非27届**不要投** |
-| `日常实习：面向全体在校生，为期3个月以上` | 全体在校生 → 可投 |
-| `27或者28年毕业，实习可转正，也有日常实习岗位` | 含28届 → 可投 |
-| `面向 2028及之后毕业同学` | 28届可投 |
-
-### 3.4 标题会骗人
-
-实测样例：
-- 智谱「**Coding实习生**」→ JD 实为 *AI Coding 数据集专家标注*（纯数据标注岗）。
-- 腾讯云雀「多模态大模型 **caption** 实习生」→ 纯视频标注 + 要求影视功底。
-- 腾讯「**Golang**」→ JD 写「目标同学：**26届**毕业生暑期实习」。
-- 盒马「阿里巴巴**春招**实习生-服务端开发」→ JD 写「阿里巴巴**2024**应届春招」「不招23届」。
-**凡薪资异常/标题含糊/公司名带"子公司/腾佳/云雀"字样，一律先读 JD 再决定。**
-
----
-
-## 4. 快速上手（复制即用）
-
-```bash
-D=<skill>/scripts
-PY=<python>
-
-# 1) 采集（keywords.json 是关键词数组）
-$PY $D/harvest_pool.py keywords.json "304,305,306" 1902
-
-# 2) 只看候选池
-$PY $D/pipeline_batch.py ls            # 全部
-$PY $D/pipeline_batch.py ls "Agent 实习"  # 按来源关键词过滤
-
-# 3) 抽查 JD（会按来源关键词自动分组导航）
-$PY $D/pipeline_batch.py jdc <jid1> <jid2>
-
-# 4) 批量执行
-$PY $D/pipeline_batch.py go decisions.json
+```text
+https://www.zhipin.com/web/geek/jobs?query=<编码后的关键词>&city=<城市码>&jobType=<类型码>&scale=<规模码>
 ```
+
+脚本用 `urllib.parse.quote` 编码关键词，浏览器加载页面后从卡片读取基本信息；完整 JD 要点击对应卡片后读取。默认优先取卡片 Vue 数据中的 jobId，DOM 兜底会从 href 提取 jobId 并保存 href；执行仍按 jobId 定位当前列表中的卡片，不直接打开保存的岗位详情链接。
+
+### 参数来源与优先级
+
+| 入口 | 公司规模 scale | 岗位类型 jobType | 城市 city |
+|---|---|---|---|
+| `immediate start` | BOSS_SCALE，默认 304,305,306 | BOSS_JOBTYPE，默认 1902 | BOSS_CITY → 本轮画像 city_code → 100010000 |
+| `batch jdc` / 默认 `batch go` | 同上 | 同上 | 同上 |
+| `scan` | 第 2 个位置参数 → BOSS_SCALE → 304,305,306 | 第 3 个位置参数 → BOSS_JOBTYPE → 1902 | 同上 |
+| `harvest` | 第 2 个位置参数 → 304,305,306 | 第 3 个位置参数 → 1902 | 同上 |
+
+immediate 与 batch 共用 `pipeline_batch.kw_url()`；harvest 的 scale/jobType 不读取 BOSS_SCALE/BOSS_JOBTYPE。scan 额外支持第 4 个参数（滚动次数，默认取 BOSS_SCAN_SCROLLS 或 3）、第 5 个参数 `jd`（读取 JD），以及可选的 BOSS_SCAN_PAGE（追加 page 查询参数）。具体页面是否支持分页或继续加载，以实际观察为准。
+
+参数属于搜索范围，不是语义审核结论。当前默认值偏向实习、500 人及以上公司；应按用户要求调整，不能把这些默认值当作所有人的求职条件。
+
+### 当前使用的筛选码
+
+使用枚举码，不使用“1000-9999人”这类展示文案作为 scale 参数。以下为项目沿用的页面筛选映射；平台变更时应核对实际筛选控件与 URL。
+
+| jobType | 含义 |
+|---|---|
+| 1901 | 全职 |
+| 1902 | 实习 |
+| 1903 | 兼职 |
+
+| scale | 公司人数档位 |
+|---|---|
+| 301 | 0–20 人 |
+| 302 | 20–99 人 |
+| 303 | 100–499 人 |
+| 304 | 500–999 人 |
+| 305 | 1000–9999 人 |
+| 306 | 10000 人以上 |
+
+多选用逗号连接，例如 `304,305,306`。公司规模不能直接证明公司性质、岗位适合度或是否外包；这些仍需结合 JD 与用户画像审核。薪资、经验、学历、融资等其他筛选，先检查当前页面控件与选中后的 URL，不照抄旧版本的未验证码值。
+
+### 账户模式下的环境变量
+
+`accounts.check_environment()` 会拒绝与账户配置冲突的 BOSS_WORKDIR/BOSS_PROFILE，以及与画像 city_code 不一致的 BOSS_CITY。城市变更应修改所选账户画像并在下一轮 begin 生效，不用环境变量覆盖为另一个城市。
+
+BOSS_SCALE/BOSS_JOBTYPE 不属于画像快照，入口也没有锁定它们；每次子命令都从调用环境继承。应在一轮开始前确定，并在该轮保持一致。
+
+```powershell
+# 仅示例：确认符合当前用户要求后，在调用脚本前设置。
+$env:BOSS_SCALE = "304,305,306"
+$env:BOSS_JOBTYPE = "1902"
+```
+
+旧批量流程尤其需要保持采集、读 JD、投递的条件一致。默认 go 的 URL 不读取 pool.json 中保存的 scale/job_type：如果 harvest 采了 303 档而 go 只搜索 304–306 档，部分旧卡片会因筛选不同而定位不到。即使参数一致，重新加载也可能导致列表轮换。
+
+## 2. 默认逐岗流程中的列表恢复
+
+immediate start 仅在进入或切换关键词时导航；next 从当前真实列表选取一个未处理岗位，读取 JD 后等待智能体决策。合适即发送，不把多个已审岗位积攒起来再重新搜索。
+
+专属话术确认送达后，使用 `list_return.py` 校验来源并后退一次，尝试恢复浏览器缓存中的原文档。核验原岗位（允许刚投岗位消失）、相对顺序和滚动位置后继续；失败时保留已送达结果并停止，不自动重新打开搜索 URL。不能用“URL 相同”推定“列表没变”。
+
+列表长度、是否懒加载和可用的缓存均以实际页面为准。next 当前最多检查三轮列表并滚动两次；view_exhausted 只说明本次有限范围无未处理项，不保证所有岗位都已读完或整站供给耗尽。
+
+## 3. 兼容批量入口（仅用户明确选择时使用）
+
+所有示例在技能目录执行，通过账户入口包装，不直接运行底层浏览器脚本。使用前完成 [账户准备](accounts.md) 并 begin，以下变量沿用同一配置与 run：
+
+```powershell
+$accountConfig = "accounts/b/account.json"
+$runId = "替换为begin返回的run"
+```
+
+### 多关键词候选池
+
+```powershell
+# keywords.json 是关键词字符串数组；规模/岗位类型显式传给 harvest。
+python scripts/run_account.py --config $accountConfig --run $runId harvest accounts/b/data/keywords.json "304,305,306" 1902
+python scripts/run_account.py --config $accountConfig --run $runId batch ls
+# 将下列示例 ID 替换为实际待审岗位；每个待投岗位都需要完整 JD。
+python scripts/run_account.py --config $accountConfig --run $runId batch jdc jid1 jid2
+# 智能体完成审核及话术后才执行：
+python scripts/run_account.py --config $accountConfig --run $runId batch go accounts/b/data/decisions.json
+```
+
+harvest 逐个导航关键词页，读取当时已加载的卡片，不主动滚动；按 jobId 并入 pool.json，记录来源 _kw，过滤已投递项，但不会更新已在池中的同 ID 元数据。它不会在采集阶段过滤所有 uncertain，执行阶段仍由共享进度阻止重复发送。
+
+jdc 按 _kw 分组重新导航，再逐个读取 JD。当前 jd_cache.json 保存本次调用结果，会覆盖此前文件；不能把它当成完整历史缓存，也不能把 panel_ok=false/空正文/错误项作为已读 JD。
+
+默认 go 再按 _kw 分组导航并执行。因此采集、读 JD、投递可能处于不同批搜索结果，手里的 jobId 不保证当前卡片还在。不要反复追找同一个消失岗位。
+
+### 同页扫描与执行
+
+```powershell
+python scripts/run_account.py --config $accountConfig --run $runId scan "Python 实习" "304,305,306" 1902 3 jd
+# 审核读取到的完整 JD；不切换页面，再执行：
+python scripts/run_account.py --config $accountConfig --run $runId batch go accounts/b/data/decisions.json --current-page
+```
+
+scan 在一次导航后采集并按参数滚动；jd 模式复用有效的 jd_*.json 缓存（排除 jd_cache.json），其余逐条读取并落盘。缓存并非页面当前存在或 JD 未变的证明，投递前仍需核验。
+
+--current-page 检查当前域名、路径、关键词与决策来源 _kw 一致，不执行组间导航；它没有核验所有筛选参数或整页岗位集合，也不能锁住页面状态。同页扫描仍属于先读一批再执行，与默认 immediate 的单条待审机制不同。
+
+### 批量决策与发送方式
+
+```json
+{
+  "deliver": ["jid1"],
+  "reject": ["jid2"],
+  "greetings": {
+    "jid1": "智能体依据该岗位JD和真实画像生成的专属话术"
+  }
+}
+```
+
+提供 greetings 时须覆盖每个待投岗位；缺少映射会在浏览器操作前报错。不提供 greetings 时走平台默认招呼路径，仅在用户明确选择这种方式时使用。专属话术路径与 immediate 共用消息核验、浏览器后退及原列表恢复；恢复失败也会停止批量执行。
+
+reject 写入 walk_state.json.rejected_jids；它与 immediate_state.json.handled 是不同的记录机制，不要假定两个入口自动共享所有拒绝结果。已投和 uncertain 等共享进度由执行器检查；批量的 run_result.json 是本次执行结果，不是历史累计报告。
+
+## 4. 读取失败与审核边界
+
+- panel_ok=false 时，当前 cmd_open 返回空 detail/title，不把上一岗位残留正文作为目标 JD。not_found 表示有限定位后当前列表中未找到，不代表岗位已下架。
+- 不能用职位标题、搜索关键词或卡片学历替代完整 JD。届别、学历、实习安排和岗位职责都要与当前用户匹配；“日常实习”本身不等于所有人都符合。
+- 历史样例仅能说明需要读正文，不能推导某个公司或职业的固定通过/拒绝规则。
+- 不通过直连岗位搜索接口刷分页来替代当前浏览器流程。出现验证、上限或未知页面状态时停止并核对，不根据历史“几秒后恢复”等经验自动继续。
+- 诊断无浮层不能证明消息未发送。uncertain 先核对目标会话；不得清空去重记录来提高“成功率”。
+
+## 5. 收尾与比较口径
+
+```powershell
+python scripts/run_account.py --config $accountConfig --run $runId report
+python scripts/run_account.py --config $accountConfig --run $runId end
+```
+
+投递汇总.html 读取所选账户 workdir 的累计 stream_progress.json，本轮结果应按 run 单独核对。性能比较应区分读取成功率、卡片缺失、审核耗时、发送及返回耗时、独立岗位覆盖数和确认送达数量，不将一次小样本或历史描述当作固定提速倍数。各子命令耗时见 command_timings.jsonl，逐岗阶段记录见 immediate_events.jsonl。
