@@ -40,6 +40,22 @@ B 也按同样流程独立绑定。`bind` 会重新读取身份，与确认值�
 
 ## 开始、操作与结束
 
+默认逐岗流程（以下旧 `live` 和批量命令仅作兼容入口）：
+
+```powershell
+python scripts/run_account.py --config accounts/b/account.json begin
+python scripts/run_account.py --config accounts/b/account.json --run <run-id> immediate start "Python 实习"
+python scripts/run_account.py --config accounts/b/account.json --run <run-id> immediate next
+# 智能体审核返回的完整 JD，写入含 jobId、review_id、action、reason 的决策 JSON。
+# approve 还需要 greeting；reject 不发送。决策文件路径相对于终端目录。
+python scripts/run_account.py --config accounts/b/account.json --run <run-id> immediate decide <决策文件>
+# 继续 next → 审核 → decide；当前范围耗尽且没有 pending 后可 start 另一个关键词。
+python scripts/run_account.py --config accounts/b/account.json --run <run-id> report
+python scripts/run_account.py --config accounts/b/account.json --run <run-id> end
+```
+
+`immediate status` 可查看本轮待审项和处理状态。旧 run 的审核标识不能用于新 run；历史已投及 uncertain 仍共用 `stream_progress.json`。`immediate_events.jsonl` 保存审核理由与阶段耗时，`command_timings.jsonl` 保存新旧命令耗时，便于对照；时间不足以单独证明轮换原因，需结合定位结果。
+
 ```powershell
 python scripts/run_account.py --config accounts/a/account.json begin
 # 将返回的 run 值记为 <run-id>，本轮每条命令都使用它。

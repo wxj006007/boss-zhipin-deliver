@@ -3,7 +3,21 @@ name: boss-zhipin-deliver
 description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已登录的 Chrome 或 Edge，支持独立账户配置与串行切换；读取岗位 JD，由智能体审核匹配度并生成专属打招呼语，填写发送后回读核验，收尾生成投递汇总页。触发词：BOSS直聘、投递简历、自动投递、找工作、投岗位、boss投递。
 ---
 
-# BOSS直聘自动化投递 Skill v6.12（AI 语义审核与岗位专属招呼语）
+# BOSS直聘自动化投递 Skill v6.13（逐岗读取、审核后立即投递）
+
+## 默认流程：逐岗立即投递（优先于下文历史流程）
+
+真实投递默认使用 `immediate`：当前列表选一张 → 读完整 JD → 智能体结合账户画像审核并生成专属话术 → 合适立即发送、不合适记录拒绝 → 回到列表重新选择未处理岗位。不得先积攒多个待审/待投岗位再回头发送。仅用户明确选择批量或对照测试时使用下文 `harvest/jdc/go`。
+
+账户 begin 后使用 `run_account.py --config <配置> --run <run> immediate start <关键词>` 导航一次，再交替调用 `immediate next` 和 `immediate decide <决策文件>`。每次 `next` 只返回一个岗位、完整 JD 和唯一 `review_id`；未提交决策时重复 `next` 只返回同一项，不读取下一张。
+
+决策 JSON：`{"jobId":"返回的ID","review_id":"本次审核标识","action":"approve","reason":"结合画像与JD的具体理由","direction":"方向","greeting":"智能体撰写的专属话术"}`。拒绝用 `action:"reject"`，必须保留理由，不需要 greeting。适合与否始终由智能体判断，不用关键词脚本替代语义审核。
+
+投递前重新核对当前岗位与已审 JD，面板或正文发生变化返回 `review_required`，必须重新 `next` 审核，不能复用旧决策。发送复用已有送达核验与 uncertain 去重。点击沟通前记录原文档标识、岗位顺序和滚动位置；送达后从确认来源的聊天页后退一次，利用浏览器缓存恢复原列表，不重新 navigate 搜索 URL。只有原文档、未投岗位集合和相对顺序均保留才继续；恢复失败或列表变化时保留已送达结果并停止，不能假称本页已看完或重新发送。
+
+下一次 `next` 读取真实 DOM，按岗位 ID 跳过本轮已处理/历史已投岗位，不依赖旧池或位置。`view_exhausted` 仅代表本次有限滚动范围没有未处理项，可切换关键词，不代表网站全部岗位已穷尽。浏览器缓存不保证每次命中，网站也可能主动更新列表；返回结果的 `list_return.preserved` 必须为 true，不能只看 URL 一样就认定保留成功。
+
+状态保存于账户目录 `immediate_state.json`，逐步记录于 `immediate_events.jsonl`，统一入口各命令耗时记录于 `command_timings.jsonl`。中断后在原 run 继续 `next`；有 uncertain 或停止状态先核对，不能通过 start/reset 绕过。收尾生成 report 并 end。详细命令见 [账户说明](references/accounts.md)。
 
 ## 多账户入口（优先于下文单账户示例）
 

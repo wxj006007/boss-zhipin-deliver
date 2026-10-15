@@ -5,7 +5,8 @@ No model API: the agent reads the JD and supplies the message as UTF-8 JSON.
 import json
 import time
 
-from scripts.webbridge_client import evaluate, evaluate_once, navigate, SESSION
+from scripts.webbridge_client import evaluate, evaluate_once, SESSION
+from scripts.list_return import capture_list, restore_list
 from scripts.account_browser import verify_identity, guarded_script
 from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 
@@ -132,6 +133,11 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
     job['hr_activity'] = activity
     if not activity['allowed']:
         return activity_skip_result(activity)
+    try:
+        list_context = capture_list(session)
+    except Exception as error:
+        return {"delivered_ok": False, "stopped": True,
+                "reason": f"未能记录原列表，尚未点击沟通：{error}"}
     clicked = evaluate_once(guarded_script(ps.CLICK_CHAT_JS), session=session)
     if not str(clicked).startswith("CLICKED:"):
         return {"delivered_ok": False, "reason": "未找到立即沟通按钮"}
@@ -205,9 +211,12 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
             result = {"delivered_ok": True, "verify": True,
                       "verification_source": "custom_greeting_message", "message_id": confirmed["id"]}
             try:
-                navigate(original_url, session=session, expect_url_contains="/web/geek/jobs")
-            except Exception:
-                result.update(stopped=True, reason="消息已确认，但返回岗位列表失败")
+                restored = restore_list(list_context, jid, session)
+                result['list_return'] = restored
+                if not restored.get('preserved'):
+                    result.update(stopped=True, reason="消息已确认；" + restored['reason'])
+            except Exception as error:
+                result.update(stopped=True, reason=f"消息已确认，但保留原列表返回失败：{error}")
             return result
         time.sleep(.5)
     return uncertain("未读到自定义消息的送达状态，不自动重发")

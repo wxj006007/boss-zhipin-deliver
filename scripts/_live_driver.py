@@ -394,16 +394,19 @@ def cmd_walk(keyword, job_type="", force=False):
     return None
 
 
-def cmd_open(jid):
+def cmd_open(jid, reuse_if_current=False):
     import re
     if not re.fullmatch(r"[A-Za-z0-9_-]+", str(jid or "")):
         raise ValueError("无效岗位ID")
     sel = f'a[href*="job_detail/{jid}"]'
-    evaluate(f"""(function(){{var el=document.querySelector('a[href*="job_detail/{jid}"]');if(el)el.scrollIntoView({{block:'center'}});return !!el;}})()""")
-    time.sleep(1.0)
-    ok = click(sel)
-    time.sleep(2.0)
-    panel_ok = _panel_shows_job(jid, "")
+    panel_ok = reuse_if_current and _panel_shows_job(jid, "")
+    ok = bool(panel_ok)
+    if not panel_ok:
+        evaluate(f"""(function(){{var el=document.querySelector('a[href*="job_detail/{jid}"]');if(el)el.scrollIntoView({{block:'center'}});return !!el;}})()""")
+        time.sleep(1.0)
+        ok = click(sel)
+        time.sleep(2.0)
+        panel_ok = _panel_shows_job(jid, "")
     located = "ok" if panel_ok else _try_locate_card(jid, "", session=SESSION)
     if not panel_ok:
         panel_ok = located == "ok" and _panel_shows_job(jid, "")
@@ -418,7 +421,8 @@ def cmd_open(jid):
             "hr_activity": activity}
 
 
-def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=None):
+def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=None,
+                reviewed_detail=None):
     verify_identity()
     """Deliver ONE live card by jid. Job metadata (company/salary/industry/
     direction) is taken from simple positional args (shell-safe, no JSON).
@@ -437,7 +441,17 @@ def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=
         return {"delivered_ok": False, "already_done": True, "reason": "已处理或待核对，避免重复发送"}
     if walk_state().get("delivery_halted"):
         return {"delivered_ok": False, "stopped": True, "reason": "上轮异常已停止；核对后用 walk --reset 恢复"}
-    op = cmd_open(jid)  # scroll+click the card, verify panel is on this job
+    if reviewed_detail is not None:
+        # Immediate mode never searches a stale card or reopens an unreviewed panel.
+        if not _panel_shows_job(jid, ""):
+            return {"delivered_ok": False, "review_required": True,
+                    "reason": "审核后的岗位面板已变化，请重新读取审核"}
+        op = cmd_open(jid, reuse_if_current=True)
+        if " ".join(str(op.get("detail") or "").split()) != " ".join(reviewed_detail.split()):
+            return {"delivered_ok": False, "review_required": True,
+                    "reason": "审核后的JD内容已变化，请重新读取审核"}
+    else:
+        op = cmd_open(jid)  # scroll+click the card, verify panel is on this job
     if not op.get("panel_ok"):
         if op.get("not_found"):
             return {"delivered_ok": False, "not_found": True, "detail": op,

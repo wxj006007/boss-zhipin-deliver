@@ -132,7 +132,7 @@ def child_command(config, command, args):
     # Path overrides would separate records from the selected account.
     if any(arg == '--workdir' or arg.startswith('--workdir=') for arg in args):
         raise ValueError('账户模式不接受 --workdir，请修改账户配置')
-    modules = {'live': '_live_driver', 'batch': 'pipeline_batch', 'scan': 'page_scan',
+    modules = {'live': '_live_driver', 'immediate': 'immediate', 'batch': 'pipeline_batch', 'scan': 'page_scan',
                'harvest': 'harvest_pool', 'env': 'env_check', 'cleanup': 'cleanup'}
     if command in ('report', 'verify', 'diag'):
         if args:
@@ -161,6 +161,7 @@ def execute(config, token, command, args):
     env['PYTHONPATH'] = str(ROOT) + os.pathsep + env.get('PYTHONPATH', '')
     # Preserve the caller's cwd so paths to decisions/greetings retain their meaning.
     emit(dict(ac.metadata(), account=active['account'], browser=active['browser'], run=token, command=command))
+    started = time.monotonic()
     proc = subprocess.Popen(argv, env=env)
     inflight = ac.CONTROL_DIR / 'inflight.json'
     try:
@@ -174,6 +175,14 @@ def execute(config, token, command, args):
     finally:
         if proc.poll() is not None and inflight.exists():
             inflight.unlink()
+        try:
+            with (Path(active['workdir']) / 'command_timings.jsonl').open('a', encoding='utf-8') as log:
+                log.write(json.dumps(dict(account=active['account'], run=token, command=command,
+                                          args=args, completed_at=datetime.now(timezone.utc).isoformat(),
+                                          elapsed_s=round(time.monotonic() - started, 3),
+                                          exit_code=proc.poll()), ensure_ascii=False) + '\n')
+        except OSError as error:
+            print(f'耗时日志写入失败：{error}', file=sys.stderr)
 
 
 def main():
@@ -186,7 +195,7 @@ def main():
     parser.add_argument('--confirm', help='inspect 输出的确认值，核对账户后使用')
     parser.add_argument('--bridge-exe')
     parser.add_argument('command', choices=['inspect', 'bind', 'begin', 'end', 'status', 'bridge-start',
-                        'bridge-status', 'live', 'batch', 'scan', 'harvest', 'env', 'report', 'verify', 'diag', 'cleanup'])
+                        'bridge-status', 'live', 'immediate', 'batch', 'scan', 'harvest', 'env', 'report', 'verify', 'diag', 'cleanup'])
     parser.add_argument('args', nargs=argparse.REMAINDER)
     opts = parser.parse_args()
     try:

@@ -21,11 +21,12 @@ class GreetingTests(unittest.TestCase):
         self.patches = [
             patch.object(g, "evaluate", return_value="https://www.zhipin.com/web/geek/jobs?query=test"),
             patch.object(g, "evaluate_once", return_value="CLICKED:A"),
-            patch.object(g, "navigate"),
+            patch.object(g, "restore_list", return_value={'preserved': True}),
             patch.object(g.time, "sleep"),
             patch.object(ps, "_panel_shows_job", return_value=True),
             patch.object(ps, "read_popup_type", return_value=""),
             patch.object(ps, "detect_page_anomaly", return_value=(False, "")),
+            patch.object(g, "capture_list", return_value={'token': 'test'}),
         ]
         self.mocks = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
@@ -89,6 +90,25 @@ class GreetingTests(unittest.TestCase):
         ])
         self.assertTrue(result["delivered_ok"])
         self.assertTrue(result["stopped"])
+
+    def test_changed_list_keeps_success_but_stops_further_delivery(self):
+        self.mocks[2].return_value = {'preserved': False, 'reason': '剩余岗位变化'}
+        result, action = self.run_flow([
+            self.send_ready(input=''), {'ok': True}, self.send_ready(), {'ok': True},
+            self.send_ready(input='', messages=[{'id': 'new', 'text': '你好，相关项目经历', 'sent': True}]),
+        ])
+        self.assertTrue(result['delivered_ok'])
+        self.assertTrue(result['stopped'])
+        self.assertFalse(result['list_return']['preserved'])
+        self.assertEqual(sum(c.args[1:2] == ('send',) for c in action.call_args_list), 1)
+
+    def test_cannot_capture_list_stops_before_contact(self):
+        self.mocks[7].side_effect = ValueError('no cards')
+        result, action = self.run_flow([])
+        self.assertTrue(result['stopped'])
+        self.assertFalse(result['delivered_ok'])
+        self.mocks[1].assert_not_called()
+        action.assert_not_called()
 
     def test_wrong_target_never_fills_or_sends(self):
         with patch.object(g.time, "monotonic", side_effect=[0, 0, 100]), patch.object(ps, "_verify_delivered_on_page", return_value=False):
