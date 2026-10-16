@@ -23,7 +23,9 @@ CAPTURE_JS = r"""(() => {
             if(p.scrollHeight>p.clientHeight+4) result.push(p);
         return result;
     })])].filter(Boolean).map(el => ({el,top:el.scrollTop,left:el.scrollLeft}));
-    const context = {token,url:location.href,ids,timeOrigin:performance.timeOrigin,historyLength:history.length};
+    const entry = window.navigation?.currentEntry;
+    const context = {token,url:location.href,ids,timeOrigin:performance.timeOrigin,historyLength:history.length,
+        historyKey:entry?.key || null,historyIndex:entry?.index ?? null};
     window.__bossListReturn = {...context,nodes,scrolls};
     return JSON.stringify({ok:true,...context});
 })()"""
@@ -41,7 +43,14 @@ PROBE_JS = r"""(() => {
     const expected = c.ids.filter(id => id !== JOB_ID);
     const remaining = ids.filter(id => expected.includes(id));
     const missing = expected.filter(id => !ids.includes(id));
+    const entry = window.navigation?.currentEntry;
+    const previous = window.navigation?.entries().find(e=>e.index===entry?.index-1);
+    const nav = performance.getEntriesByType('navigation')[0];
     return JSON.stringify({url:location.href,referrer:document.referrer,historyLength:history.length,
+        history_key:entry?.key || null,history_index:entry?.index ?? null,
+        previous_entry:previous ? {key:previous.key,index:previous.index,url:previous.url} : null,
+        time_origin:performance.timeOrigin,navigation_type:nav?.type,
+        not_restored_reasons:nav?.notRestoredReasons?.toJSON?.() || nav?.notRestoredReasons || null,
         on_list:onList,same_document:sameDocument,chat_visible:chatVisible,
         missing_ids:missing,order_preserved:JSON.stringify(expected)===JSON.stringify(remaining),
         before_count:c.ids.length,after_count:ids.length,
@@ -64,13 +73,34 @@ def probe_list(context, jid, session=SESSION):
 def restore_list(context, jid, session=SESSION, timeout=8):
     from urllib.parse import urlparse
     def failed(reason, state):
-        return dict(state, preserved=False, reason=reason)
+        return dict(state, preserved=False, reason=reason,
+                    expected_time_origin=context.get('timeOrigin'),
+                    expected_history_key=context.get('historyKey'))
 
+    if context.get('tab_id') is not None:
+        from scripts.chat_tab import tab_command
+        from scripts.account_browser import verify_identity
+        tabs = tab_command('list_tabs', session=session).get('tabs', [])
+        if not any(t.get('tabId') == context['tab_id'] and t.get('url') == context['url'] for t in tabs):
+            return failed('原列表标签页已关闭或被导航，不重新创建列表', {})
+        tab_command('attach_tab', {'tabId':context['tab_id']}, session)
+        verify_identity()
     state = probe_list(context, jid, session)
     if not state.get('on_list'):
+        if context.get('tab_id') is not None:
+            return failed('原列表标签页落点变化，未导航或后退', state)
         current = urlparse(state.get('url', ''))
         h0, h1 = context['historyLength'], state.get('historyLength')
-        direct_history = h1 == h0 + 1 or (h0 >= 50 and h1 == h0)
+        if context.get('historyKey') and state.get('history_key'):
+            # history.length includes forward entries. A navigation after back
+            # may replace that tail without increasing the total length.
+            previous = state.get('previous_entry') or {}
+            direct_history = (previous.get('key') == context['historyKey']
+                              and previous.get('index') == context['historyIndex']
+                              and previous.get('url') == context['url']
+                              and state.get('history_index') == context['historyIndex'] + 1)
+        else:
+            direct_history = h1 == h0 + 1 or (h0 >= 50 and h1 == h0)
         # A same-document route retains our marker; a full navigation has a referrer.
         if (current.hostname != 'www.zhipin.com' or current.path != '/web/geek/chat'
                 or not direct_history or not (state.get('same_document') or state.get('referrer') == context['url'])):
@@ -83,7 +113,8 @@ def restore_list(context, jid, session=SESSION, timeout=8):
         if state.get('on_list') and state.get('same_document'):
             if state.get('chat_visible'):
                 return failed('聊天浮层仍打开，需核对关闭入口；未刷新列表', state)
-            if state.get('missing_ids') or not state.get('order_preserved'):
+            if (state.get('missing_ids') or not state.get('order_preserved')
+                    or (context.get('tab_id') is not None and not state.get('same_nodes'))):
                 return failed('原页面已恢复，但剩余岗位发生变化，停止本页遍历', state)
             # Restore existing scroll containers, never reconstruct or inject job cards.
             code = """(() => {const p=window.__bossListReturn;
@@ -93,7 +124,9 @@ def restore_list(context, jid, session=SESSION, timeout=8):
             restored = evaluate_once(code, session=session)
             if restored is not True:
                 return failed('恢复滚动位置时原页面状态已变化', state)
-            return dict(state, preserved=True, method='retained_document', scroll_restored=True)
+            return dict(state, preserved=True,
+                        method='retained_tab' if context.get('tab_id') is not None else 'retained_document',
+                        scroll_restored=True)
         if time.monotonic() >= deadline:
             return failed('未恢复原列表文档；未重新打开搜索URL', state)
         time.sleep(.25)

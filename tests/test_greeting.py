@@ -27,6 +27,7 @@ class GreetingTests(unittest.TestCase):
             patch.object(ps, "read_popup_type", return_value=""),
             patch.object(ps, "detect_page_anomaly", return_value=(False, "")),
             patch.object(g, "capture_list", return_value={'token': 'test'}),
+            patch.object(g, "prepare_chat_tab"),
         ]
         self.mocks = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
@@ -118,7 +119,7 @@ class GreetingTests(unittest.TestCase):
 
     def test_success_popup_opens_chat_but_does_not_count_as_custom_send(self):
         self.mocks[5].side_effect = ["", "greet_sent"]
-        with patch.object(g, "continue_chat", return_value=True) as cont, patch.object(g.time, "monotonic", side_effect=[0, 0, 100]):
+        with patch.object(g, "enter_chat_tab", return_value=True) as cont, patch.object(g.time, "monotonic", side_effect=[0, 0, 0, 100]):
             result, _ = self.run_flow([{"ready": False}])
         cont.assert_called_once()
         self.assertFalse(result["delivered_ok"])

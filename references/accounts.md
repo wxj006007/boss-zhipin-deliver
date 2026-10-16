@@ -59,7 +59,7 @@ python scripts/run_account.py --config $accountConfig --run <run-id> end
 
 `immediate status` 可查看本轮待审项和处理状态。旧 run 的审核标识不能用于新 run；历史已投及 uncertain 仍共用 `stream_progress.json`。`immediate_events.jsonl` 保存审核理由与阶段耗时，`command_timings.jsonl` 保存新旧命令耗时，便于对照；时间不足以单独证明轮换原因，需结合定位结果。
 
-专属话术确认送达后后退恢复原列表，核验 `list_return.preserved=true` 且未停止才继续；恢复失败保留已送达结果并停止，不重新搜索或重复发送。下面保留A账户的旧live示例，B同样可用自己的配置执行该兼容入口：
+专属话术在同一账户/session的聊天标签页发送，原列表标签页保持打开；送达后切回并核验 `list_return.preserved=true` 且未停止才继续。返回时核验同一文档、原节点、剩余岗位顺序和滚动位置；失败保留已送达结果并停止，不重新搜索或重复发送。聊天标签页按岗位ID精确选择会话，遇已有草稿不切换、不覆盖。下面保留A账户的旧live示例，B同样可用自己的配置执行该兼容入口：
 
 ```powershell
 python scripts/run_account.py --config accounts/a/account.json begin
@@ -131,3 +131,5 @@ python scripts/run_account.py --config accounts/b/account.json --run $b end
 执行 `python -m unittest discover -s tests -v` 运行离线回归。`tests/test_account_concurrency.py` 使用临时工作区、两个本地假桥接及真实 Python 子进程，验证同时执行、端点/账户互斥、注册冲突、父进程崩溃后的隔离恢复、身份与数据路由、历史去重和旧版收尾。离线测试不读取本机账户配置、不调用真实发送。
 
 2026-10-16 已另行按用户授权完成一次真实并行验证：A/Edge、B/Chrome 各发送 1 条专属招呼，均返回消息 ID、`delivered_ok=true`、`verify=true`，记录归属正确且 uncertain 均为空。两条发送命令执行区间重叠约 13.5 秒。B 的 `list_return.preserved=true`；A 送达后列表文档变化，返回 `preserved=false` 并停止，已送达记录保留且未重发。两轮均已 report/end 收尾；A 的停止状态保留，后续继续须按 SKILL.md 的核对恢复流程处理。这是一次双账户并行发送实测，不代表长时间连续投递的稳定性。
+
+随后双subagent独立验收也各成功发送1条，发送命令重叠6.04秒，A再次出现原列表恢复失败。排查取得浏览器明确原因 `broadcastchannel-message`：发送引发的广播使原列表被移出后退缓存。现改为保留列表页、同session聊天标签页发送后切回，避免依赖缓存。修复后A真实发送1条专属招呼，`verify=true`，`method=retained_tab`，`same_document/same_nodes/order_preserved/preserved/scroll_restored` 均为 true；随后可读取下一岗，重放旧审核被拦截，没有重发。另修复了后退历史包含前进条目时总长度不增加而导致来源误判的问题，历史兼容路径优先核对 Navigation API 的条目标识与位置。

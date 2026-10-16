@@ -7,6 +7,7 @@ import time
 
 from scripts.webbridge_client import evaluate, evaluate_once, SESSION
 from scripts.list_return import capture_list, restore_list
+from scripts.chat_tab import prepare_chat_tab, enter_chat_tab
 from scripts.account_browser import verify_identity, guarded_script
 from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 
@@ -135,6 +136,7 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
         return activity_skip_result(activity)
     try:
         list_context = capture_list(session)
+        prepare_chat_tab(list_context, session)
     except Exception as error:
         return {"delivered_ok": False, "stopped": True,
                 "reason": f"未能记录原列表，尚未点击沟通：{error}"}
@@ -157,7 +159,10 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
             return dict(uncertain("沟通上限，需核对本次状态"), daily_limit=True)
         if not continued and (popup == "greet_sent" or
                               (not popup and ps._verify_delivered_on_page(session, jid))):
-            continued = bool(continue_chat(session))
+            continued = enter_chat_tab(list_context, jid, popup, session, timeout)
+            # Opening/loading a sibling tab has its own bounded wait; give the
+            # active conversation its full readiness timeout after selection.
+            deadline = time.monotonic() + timeout
         elif popup in ("not_interested", "resume_guide") or (popup == "unknown" and not state.get("ready")):
             return uncertain("出现未识别的沟通界面，需人工核对")
         time.sleep(.5)

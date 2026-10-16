@@ -57,5 +57,22 @@ class ReturnTests(unittest.TestCase):
             self.assertEqual(action.call_count, 1)
 
 
+    def test_forward_history_tail_does_not_require_length_increase(self):
+        context = dict(self.context, historyLength=3, historyKey='list-entry', historyIndex=1)
+        chat = dict(self.chat, historyLength=3, history_key='chat-entry', history_index=2,
+                    previous_entry={'key':'list-entry', 'index':1, 'url':context['url']})
+        with patch.object(lr, 'probe_list', side_effect=[chat, self.back]), patch.object(lr, 'evaluate_once', return_value=True) as action:
+            self.assertTrue(lr.restore_list(context, 'a')['preserved'])
+        self.assertEqual(sum('history.back()' in c.args[0] for c in action.call_args_list), 1)
+
+    def test_wrong_previous_entry_cannot_fall_back_to_length_heuristic(self):
+        context = dict(self.context, historyKey='list-entry', historyIndex=1)
+        chat = dict(self.chat, history_key='chat-entry', history_index=2,
+                    previous_entry={'key':'different-entry', 'index':1, 'url':context['url']})
+        with patch.object(lr, 'probe_list', return_value=chat), patch.object(lr, 'evaluate_once') as action:
+            self.assertFalse(lr.restore_list(context, 'a')['preserved'])
+            action.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
