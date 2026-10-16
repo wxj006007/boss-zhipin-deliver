@@ -18,6 +18,12 @@ from scripts.runtime import atomic_write_json, resolve_workdir
 from scripts.hr_activity import record_skip
 
 
+# Bounded absorption of HR-activity-filtered cards inside one `next` call.
+# Those cards are never reviewable, so bouncing the caller once per card only
+# adds process/IO overhead; each skip is still recorded individually.
+MAX_ABSORBED_SKIPS = 10
+
+
 class Immediate:
     def __init__(self):
         self.root = Path(resolve_workdir())
@@ -91,6 +97,7 @@ class Immediate:
             self.save(state)
         self.page(state)
         started = time.monotonic()
+        skipped = 0
         for scroll in range(3):
             jobs = wb.extract_jobs()
             for job in jobs:
@@ -114,22 +121,33 @@ class Immediate:
                     return {'read_failed': True, 'jobId': jid, 'detail': opened}
                 activity = opened.get('hr_activity') or {}
                 if activity.get('allowed') is False:
+                    # Activity-filtered cards are not reviewable jobs. Keep the
+                    # per-card record, but absorb a bounded number inside this
+                    # call instead of bouncing the caller for every one.
                     record_skip(str(self.root), job, activity, 'immediate_read')
                     state['handled'][jid] = 'activity_skip'
                     self.save(state)
                     self.event('activity_skip', started, jobId=jid)
-                    return {'activity_skipped': True, 'jobId': jid, 'reason': activity.get('reason')}
+                    skipped += 1
+                    if skipped >= MAX_ABSORBED_SKIPS:
+                        self.event('activity_skip_break', started, absorbed=skipped)
+                        return {'activity_skipped': True, 'jobId': jid,
+                                'reason': activity.get('reason'), 'absorbed': skipped,
+                                'hint': '本次已吸收多张活跃度不符卡片，可继续 next'}
+                    continue
                 pending = dict(job=job, detail=opened['detail'], hr_activity=activity,
-                               review_id=uuid.uuid4().hex, read_at=time.time())
+                               review_id=uuid.uuid4().hex, read_at=time.time(),
+                               activity_skipped_count=skipped)
                 state['pending'] = pending
                 self.save(state)
-                self.event('read', started, jobId=jid)
+                self.event('read', started, jobId=jid, absorbed_activity_skips=skipped)
                 return dict(pending, awaiting_decision=True)
             self.save(state)
             if scroll < 2:
                 ps.scroll_jobs_list(times=1)
-        self.event('exhausted', started, keyword=state['keyword'])
-        return {'view_exhausted': True, 'hint': '当前加载范围无未处理岗位，可换关键词；不代表网站全部岗位已穷尽'}
+        self.event('exhausted', started, keyword=state['keyword'], absorbed_activity_skips=skipped)
+        return {'view_exhausted': True, 'activity_skipped_count': skipped,
+                'hint': '当前加载范围无未处理岗位，可换关键词；不代表网站全部岗位已穷尽'}
 
     def decide(self, decision):
         progress = self.guard()
@@ -177,6 +195,7 @@ def main():
     sub.add_parser('start').add_argument('keyword')
     sub.add_parser('next')
     sub.add_parser('decide').add_argument('file')
+    sub.add_parser('step').add_argument('file')
     sub.add_parser('status')
     args = parser.parse_args()
     flow = Immediate()
@@ -187,6 +206,17 @@ def main():
             result = flow.next()
         elif args.command == 'decide':
             result = flow.decide(json.loads(Path(args.file).read_text(encoding='utf-8-sig')))
+        elif args.command == 'step':
+            # One process per job: send the decision made from the JD just read,
+            # then read the next job. Semantics are unchanged (the agent still
+            # decides from the pending JD, one pending job at a time); this only
+            # halves process/IO overhead per job.
+            decided = flow.decide(json.loads(Path(args.file).read_text(encoding='utf-8-sig')))
+            try:
+                following = flow.next()
+            except (ValueError, OSError, wb.AbortScriptError) as error:
+                following = {'next_deferred': str(error)}
+            result = {'decided': decided, 'following': following}
         else:
             result = flow.load()
         print(json.dumps({'ok': True, 'data': result}, ensure_ascii=False, indent=2))

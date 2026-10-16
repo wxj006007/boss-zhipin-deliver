@@ -134,11 +134,12 @@ def child_command(config, command, args):
         raise ValueError('账户模式不接受 --workdir，请修改账户配置')
     modules = {'live': '_live_driver', 'immediate': 'immediate', 'batch': 'pipeline_batch', 'scan': 'page_scan',
                'harvest': 'harvest_pool', 'env': 'env_check', 'cleanup': 'cleanup'}
-    if command in ('report', 'verify', 'diag'):
+    if command in ('report', 'verify', 'verify-full', 'diag'):
         if args:
             raise ValueError(f'{command} 不接受附加参数')
-        module = 'phase_stream'
-        args = ['--workdir', config['workdir']] + (['--diag'] if command == 'diag' else ['--mode', command])
+        module = 'chat_audit' if command == 'verify-full' else 'phase_stream'
+        args = (['--workdir', config['workdir']] if command == 'verify-full' else
+                ['--workdir', config['workdir']] + (['--diag'] if command == 'diag' else ['--mode', command]))
     else:
         module = modules[command]
         if command == 'harvest' and len(args) > 3:
@@ -195,7 +196,7 @@ def main():
     parser.add_argument('--confirm', help='inspect 输出的确认值，核对账户后使用')
     parser.add_argument('--bridge-exe')
     parser.add_argument('command', choices=['inspect', 'bind', 'begin', 'end', 'status', 'bridge-start',
-                        'bridge-status', 'live', 'immediate', 'batch', 'scan', 'harvest', 'env', 'report', 'verify', 'diag', 'cleanup'])
+                        'bridge-status', 'live', 'immediate', 'batch', 'scan', 'harvest', 'env', 'report', 'verify', 'verify-full', 'diag', 'cleanup'])
     parser.add_argument('args', nargs=argparse.REMAINDER)
     opts = parser.parse_args()
     try:

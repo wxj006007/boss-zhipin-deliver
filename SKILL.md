@@ -11,6 +11,10 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 
 账户 begin 后使用 `run_account.py --config <配置> --run <run> immediate start <关键词>` 导航一次，再交替调用 `immediate next` 和 `immediate decide <决策文件>`。每次 `next` 只返回一个岗位、完整 JD 和唯一 `review_id`；未提交决策时重复 `next` 只返回同一项，不读取下一张。
 
+`immediate step <决策文件>` 是同语义的单进程合并入口：先按决策发送，再读取下一岗，结果形如 `{"decided":…,"following":…}`。决策仍由智能体基于刚读到的 JD 作出、同一时刻只有一个待审岗位，只是把每岗两次进程调用并为一次，适合逐岗连续投递时减少进程与文件开销。`following` 若为 `next_deferred`（发送已成功但列表恢复失败触发停止），按下一节核对后恢复，不得跳过核对。
+
+`next` 会吸收（仍逐条留痕）HR 活跃度不符的卡片后再返回可审岗位，单次最多吸收 10 张，超出则以 `activity_skipped` 返回，调用方继续 `next` 即可。
+
 决策 JSON：`{"jobId":"返回的ID","review_id":"本次审核标识","action":"approve","reason":"结合画像与JD的具体理由","direction":"方向","greeting":"智能体撰写的专属话术"}`。拒绝用 `action:"reject"`，必须保留理由，不需要 greeting。适合与否始终由智能体判断，不用关键词脚本替代语义审核。
 
 投递前重新核对当前岗位与已审 JD，面板或正文发生变化返回 `review_required`，必须重新 `next` 审核，不能复用旧决策。发送复用已有送达核验与 uncertain 去重。点击沟通前记录原文档标识、岗位顺序和滚动位置；送达后从确认来源的聊天页后退一次，利用浏览器缓存恢复原列表，不重新 navigate 搜索 URL。只有原文档、未投岗位集合和相对顺序均保留才继续；恢复失败或列表变化时保留已送达结果并停止，不能假称本页已看完或重新发送。
@@ -18,6 +22,12 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 下一次 `next` 读取真实 DOM，按岗位 ID 跳过本轮已处理/历史已投岗位，不依赖旧池或位置。`view_exhausted` 仅代表本次有限滚动范围没有未处理项，可切换关键词，不代表网站全部岗位已穷尽。浏览器缓存不保证每次命中，网站也可能主动更新列表；返回结果的 `list_return.preserved` 必须为 true，不能只看 URL 一样就认定保留成功。
 
 状态保存于账户目录 `immediate_state.json`，逐步记录于 `immediate_events.jsonl`，统一入口各命令耗时记录于 `command_timings.jsonl`。中断后在原 run 继续 `next`；有 uncertain 或停止状态先核对，不能通过 start/reset 绕过。收尾生成 report 并 end。详细命令见 [账户说明](references/accounts.md)。
+
+### 恢复「发送已送达但返回原列表失败」的停止状态（核对后恢复）
+
+专属话术发送成功后，若 `list_return.preserved=false`（聊天页来源或历史不匹配，未自动后退），脚本会置 `walk_state.delivery_halted` 并停止，此后 `next`/`decide` 均被 guard 拦截。核对步骤：`stream_progress.json` 的 `uncertain` 为空，且 `immediate_events.jsonl` 中触发停止的那条 `result` 同时满足 `delivered_ok=true`、`verify=true`、有 `message_id`——满足即表明消息确已送达并核验，属「保留已送达结果并停止」，不是未确认发送。确认后按原关键词 `live walk --reset` 清除停止状态，再用 `immediate start <同一关键词>` 重新进入列表继续；若此时仍有待审岗位，只 reset、不要重新 start，以保留该待审项。
+
+`uncertain` 非空，或触发停止的那条无法证明已送达并核验时，禁止恢复，必须人工核对目标会话中的本人消息后再处理。
 
 ## 多账户入口（优先于下文单账户示例）
 
@@ -123,9 +133,8 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 - **同一关键词重新加载后卡片集可能轮换**。当前代码在面板未确认时返回空 JD，不能把上一张残留正文当作目标岗位。有限定位仍失败时跳过并重新采集，不反复追找同一个 jid。
 - **标题会骗人**：`Coding实习生` 可能是数据标注岗；`Golang` 可能写死 26届；
   `春招实习生` 可能是几年前的老 JD。存疑必读 JD。
-- **卡面学历是「最低要求」**，JD 可能写死更高（卡面"本科"、JD"硕士及以上"）→ 读 JD 确认。
-- **实习届别口径**：`ByteIntern：面向2027届（2026.9–2027.8毕业）`= 27届专属不可投；
-  `日常实习：面向全体在校生` / `面向2028及之后毕业` / `27或者28年毕业` = 可投。
+- **学历与实习届别按账户画像审核**：读完整 JD 确认要求，再按用户最新明确指示及所选账户本轮画像快照判断；卡面学历、硕士要求或届别专属字样本身不构成通用拒绝规则。
+  **账户 A、B（2026-10-16 更新）**：两个账户均忽略「硕士及以上」学历要求及「面向2027届」等届别限制，不以这些条件拒绝，其他投递条件仍须符合各自画像；只有明确排除在校生（如要求已毕业）才按此拒绝。招呼语仍如实说明本科、2028 届，不改写真实学历或届别。
 
 **批量操作经验与同页扫描**：
 - 长列表读取 JD 可能超过执行工具的单次等待时间。按工具能力分批或后台运行，使用 `python -u` 保存实时日志；读取同一个浏览器标签页的任务必须串行。中断后核对成功读取的岗位与缓存，再补读剩余岗位。
@@ -384,6 +393,8 @@ AI 基于**语义理解**决定 APPROVE / REJECT，**不是关键词命中即过
 | **v6.9** | **08-02** | **单卡游标制（用户强制 · 锁死"攥着整页清单跳序"）**：① 旧 `walk` 一次性 `extract_jobs()` 返回 ~15 张卡整列表 → 智能体跳序挑投（实测 i4→i3→i11）。改为 `_present_next()` 游标制——`walk`/`walk <kw>`/`walk --next`/`walk --more` **一律只呈现"下一张卡"表面**，绝不整页批量 dump ② 游标用 `last_jid` 锚定续走（对列表动态重排鲁棒），锚不到退回 `idx` ③ 机械跳过"城市/薪资不过关"+"已投递(去重)"两类卡，仅在 `auto_skipped_mech` 留痕 ④ `cmd_next` 不再自动开 JD，只给表面，命中由智能体显式 `open` ⑤ mock 测试验证：单卡呈现/严格顺序/门槛+去重跳过全部正确 ⑥ SKILL.md walk 章节加 v6.9 硬规则小节 + 命令注释/版本表同步 |
 | **v6.9.2** | **08-02** | **懒加载更正 + 早停 bug 修复验证**：① 实测证伪"推荐页是小池子"——推荐 feed（`?ka=header-jobs`）经用户手动拉到底 + 程序化 `walk --exhaust` 均稳定到 **450 张**（初始 15 张是懒加载未触发、非到底）；旧"40 穷尽"纯属早停 bug 假象 ② 已修 `_exhaust_recommend_feed`（先滚2次→等3s→再计数，连续4次稳定才停，上限80）经干净测试验证：重新导航回初始15张后程序化滚动稳定到 450、不再早停 ③ 关键词搜索页 `walk --next` 从不滚动的问题已修（`cmd_more` 滚3次 + `_present_next` 关键词页也检测底部文案置 `kw_exhausted`）④ SKILL.md 懒加载常识段删除"推荐 feed 小池子"错误表述，更正为"推荐页同样懒加载到 450" |
 | **v6.9.3** | **08-02** | **旧批量管道彻底清除**：用户确认新实时单卡管道（_live_driver + phase_stream report/verify）功能齐全且稳定运行，清除 v5/v6.0 遗留的旧批量架构 ① 删除 phase_stream.py 中 `run_collect`/`run_apply`/`run_status` 及其专属 helper（pick_next/screen_step/mark_skipped/write_candidate/resolve_working_url/navigate_recommend/resolve_search_queries/print_completion_blessing/write_tip_page）+ 死变量 SEARCH_QUERIES/CURRENT_QUERY；`WORKING_URL` 常量保留（仅 `_ensure_recommend` 判定工作页用）② 删除遗留脚本 phase1_collect.py/phase2_screen.py/phase5_deliver.py/reviewer.py/merge_raw.py ③ phase_stream.py 仅保留「投递共享原语 + report/verify/diag」，CLI 收敛为 `--mode verify|report` ④ SKILL.md 同步移除所有 collect/apply/status/旧链路/备选批量命令与文件结构条目。功能映射：实时投递=_live_driver walk；成果汇报=phase_stream --mode report；真实账号核对=phase_stream --mode verify（读后自动回推荐页） |
+| **v6.14** | **10-15** | **逐岗吞吐加固（新增 `immediate step`）**：① `immediate.py` 新增 `step <决策文件>` 子命令——同一进程内先 `decide` 再 `next`，返回 `{"decided":…,"following":…}`；语义不变（决策仍基于刚读的 JD、同一时刻只有一个待审岗位），把每岗两次进程调用并为一次，降低进程与文件开销（本机 sandbox 对单回合删除操作有配额，逐岗流程会因此中断） ② `next` 对 HR 活跃度不符卡片改为**有界吸收**（`MAX_ABSORBED_SKIPS=10`）：仍逐条写入 `activity_skipped` 与事件，但不再为每张卡返回一次，超出上限才以 `activity_skipped` 返回 ③ `following` 为 `next_deferred`（发送已成功但列表恢复失败触发停止）时按新增的「恢复停止状态」小节核对后恢复 ④ SKILL.md 补「恢复『发送已送达但返回原列表失败』的停止状态」操作小节与 `step` 说明 |
+| **v6.15** | **10-15** | **新增 `verify-full` 完整会话列表核对**：① 新增 `scripts/chat_audit.py` + 账户入口 `verify-full`——滚动枚举整份沟通列表（虚拟列表**必须** `dispatchEvent('scroll')` 才会加载，仅设 `scrollTop` 无效；按「姓名+公司+角色」去重，连续多步无新增即停），与本地 `stream_progress.json` 逐条比对并输出 A/B/C 三类计数，明细写 `<workdir>/_chat_audit.json`，只读且收尾回推荐页 ② **匹配必须用招呼语指纹（最早出现且全局唯一的 12 字窗口），不能用公司名/模板开头**——同公司会话多时会误判，实测曾把 70 条记录误报成落到 167 个会话；脚本额外报告「是否有两条记录落在同一会话」，用于证伪「同一 HR 多岗位合并计数」的假设 ③ SKILL.md 明确 `verify` 只读可见行的局限，并提醒核对前先问清对方看的是哪个展示位 |
 | **v6.11.1/2** | **10-13** | **批量模式三缺陷修复（实测 68 单验证）**：① **greet 成功弹窗关不掉**（每投一单必停机根因）——BOSS 弹窗容器是 `.greet-boss-container`，旧 `click_popup_button` 只搜 `.dialog-wrap/.dialog-container/.../[role=dialog]` → `NO_BTN:留在此页`；已把 greet 容器加入选择器，并把"点击后单次 1.2s 回读"改为轮询确认弹窗真正关闭（≤6s，期间残影顺手点掉；unknown/not_interested/daily_limit 仍立即停）② `_ensure_recommend` 写死 `WORKING_URL=RECOMMEND_URL` 在关键词批量流程中过时——意外跳页后被带回推荐页且落点校验 header-jobs 与当前 query 页冲突抛错；新增 `CURRENT_WORK_URL`（pipeline_batch.goto 导航成功后写入），跳页回本组关键词页 ③ `cmd_deliver` 用单次定位的 `cmd_open` 做前置门槛，卡片不在首屏 DOM 直接误判 failed——改为放行给 `_try_locate_card`（max_rounds 6→12，懒加载深挖）；not_found（卡片真不在页上）不再计入连续失败熔断（skill 语义：缺卡=跳过不中止）④ 实测结论：BOSS 搜索页轮换强，harvest 时首屏卡到投递时可能排深/消失，需 2~3 轮重试；`_feedback` 第三返回值是 ptype 字符串不是浮层数量（旧代码误当 remaining 用） |
 ### v5.2→v6.0 根因修复
 
@@ -405,6 +416,7 @@ AI 基于**语义理解**决定 APPROVE / REJECT，**不是关键词命中即过
     → APPROVE: immediate decide <决策文件>（发送专属话术→核验送达→后退恢复原列表）
     → REJECT: immediate decide <拒绝决策文件>（保存理由、不发送）
     → immediate next（继续原列表中的未处理岗位；无pending时可切关键词）
+  可选合并入口: immediate step <决策文件>（一次进程内 decide+next，语义同上）
 收尾（phase_stream.py · 必做）:
   账户入口 report → 读 stream_progress.json → 按 direction 分组 → 生成「投递汇总.html」→ end
 ```
@@ -443,6 +455,26 @@ python scripts/run_account.py --config $accountConfig --run $runId end
 
 独立核验/诊断仍可通过账户入口 `verify` / `diag` 执行（需要活动run）。verify会导航聊天页再回推荐页，diag也会导航推荐页，不能插入逐岗循环并假定原列表不变。
 
+### 完整核对真实沟通列表（`verify-full`，需要活动 run）
+
+`verify` 只读**当前可见**的会话行（首屏约 31–40 条），而站点会话列表是**虚拟滚动**的：`.user-list-content` 的 `scrollHeight` 会随滚动增长、UL 始终只保留约 40 个 `li`，**仅设 `scrollTop` 不会触发加载**，必须同时 `dispatchEvent(new Event('scroll'))`。因此 `verify` 报出的「未匹配」既不等于投递失败，也不能当作完整核对结果。
+
+需要逐条核实时用 `verify-full`（`scripts/chat_audit.py`）：
+
+```bash
+python scripts/run_account.py --config $accountConfig --run $runId verify-full
+```
+
+它滚动枚举整份会话列表（按「姓名+公司+角色」身份去重，连续多步无新增即停），再与本地 `stream_progress.json` 逐条比对，输出三类计数：
+
+- **A** 会话存在且招呼语是最后一条消息——最直接的送达证据；
+- **B** 公司在会话列表里出现，但招呼语已不是最后一条（通常是 HR 已回复）或预览被截断，需人工看一眼；
+- **C** 会话列表中完全找不到该公司——需要人工关注。
+
+> **匹配必须用招呼语指纹，不能用公司名。** 专属招呼语共享同一段固定开头，若拿开头（或公司名）去匹配，会把多条记录指向同一个会话，得出「同一 HR 收到多个岗位」的错误结论（实测踩过：公司名匹配曾把 70 条记录误报成落到 167 个会话）。`chat_audit.py` 取每条招呼语中**最早出现且在全部招呼语里唯一**的 12 字窗口作为指纹，因此能精确对应到具体会话，并额外报告「是否有两条记录落在同一会话」。
+
+只读，不改动投递记录，结束时回推荐页；明细写入 `<workdir>/_chat_audit.json`。**核对前先明确对方看的是哪个数字**：站点「沟通过」的展示位（沟通页页签／App「我的」／职位历史）各自口径不同，而本地记录按**岗位**计、一次投递一个会话；不要把两者直接相减。
+
 > **首次使用前**：填写所选账户的画像（A：`accounts/a/profile.json`；B：`accounts/b/profile.json`，重点是 `role_summary` 一句话自述 + `prefer`/`avoid` 清单）。账户模式不通过改共享画像或环境变量切换用户；旧单账户模式仍保留 `user_profile.json` / `BOSS_PROFILE` 用法。
 
 ---
@@ -466,7 +498,8 @@ python scripts/run_account.py --config $accountConfig --run $runId end
 │   ├── webbridge_client.py     ← WebBridge 共享客户端（SESSION/extract_jobs/ProgressManager/通用登录检测）
 │   ├── config_v3.py            ← v6：档案加载 + 薪资解析 + build_review_prompt(动态AI审核提示词)；无硬编码筛选
 │   ├── env_check.py            ← 环境检测（Chrome/WebBridge/Boss登录态）+ 修复指引
-│   ├── phase_stream.py         ← 投递共享原语 + 收尾：deliver_click（推荐页内原地投递）/弹窗识别关闭/面板校验/每步回读；--mode report（生成「投递汇总.html」汇报页）；--mode verify（独立核对真实沟通列表）；--diag（只读诊断）
+│   ├── phase_stream.py         ← 投递共享原语 + 收尾：deliver_click（推荐页内原地投递）/弹窗识别关闭/面板校验/每步回读；--mode report（生成「投递汇总.html」汇报页）；--mode verify（仅读可见沟通列表）；--diag（只读诊断）
+│   ├── chat_audit.py           ← verify-full：滚动枚举完整会话列表并与本地记录逐条比对（A招呼语即最后一条/B已被回复覆盖/C找不到）
 │   ├── _live_driver.py          ← 实时单卡投递驱动（walk/open/deliver/reject/walk --next/--more/--reset）；游标制单卡呈现；无 scan 批量开 JD
 │   └── cleanup.py              ← 缓存清理
 └── references/
