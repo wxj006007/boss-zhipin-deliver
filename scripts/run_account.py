@@ -22,20 +22,19 @@ def emit(value):
     print(json.dumps(value, ensure_ascii=False, indent=2), flush=True)
 
 
-def active_run():
-    path = ac.CONTROL_DIR / 'active.json'
-    return ac.read_json(path) if path.exists() else None
+def active_run(config):
+    return ac.active_run(config)
 
 
-def idle_required():
-    ac.no_inflight_command()
-    active = active_run()
+def idle_required(config):
+    ac.no_inflight_command(config)
+    active = active_run(config)
     if active:
         raise RuntimeError(f'账户 {active["account"]} 尚未结束（run={active["run"]}）；请先 end')
 
 
 def require_active(config, token):
-    active = active_run()
+    active = active_run(config)
     if not active or not token or active.get('run') != token:
         raise ValueError('缺少或错误的 --run；用 status 查看，begin 开始新运行')
     if any(active.get(k) != v for k, v in config.items()):
@@ -44,7 +43,8 @@ def require_active(config, token):
 
 
 def begin(config):
-    idle_required()
+    idle_required(config)
+    ac.check_registration(config)
     ac.check_environment(config)
     profile = ac.read_json(config['profile'])
     if not isinstance(profile, dict) or not str(profile.get('role_summary', '')).strip():
@@ -58,26 +58,27 @@ def begin(config):
     ac.mark_workdir(config)
     run = dict(config, run=uuid.uuid4().hex, profile_snapshot=profile,
                started=datetime.now(timezone.utc).isoformat())
-    atomic_write_json(ac.CONTROL_DIR / 'active.json', run)
+    atomic_write_json(ac.account_dir(config) / 'active.json', run)
     atomic_write_json(ac.CONTROL_DIR / 'enabled.json', {'enabled': True})
     atomic_write_json(Path(config['workdir']) / 'runs' / (run['run'] + '.json'), run)
     return {k: run[k] for k in ('account', 'browser', 'run', 'workdir', 'session')}
 
 
 def end(config, token):
-    ac.no_inflight_command()
+    ac.no_inflight_command(config)
     # End must remain possible even if config/profile has since changed.
-    active = active_run()
+    active = active_run(config)
     if not active or not token or active['run'] != token or active['account'] != config['account']:
         raise ValueError('账户或 --run 不匹配，不能结束其他任务')
     finished = dict(active, ended=datetime.now(timezone.utc).isoformat())
     atomic_write_json(Path(active['workdir']) / 'runs' / (token + '.json'), finished)
-    (ac.CONTROL_DIR / 'active.json').unlink()
+    (ac.account_dir(config) / 'active.json').unlink()
     return {'ended': token, 'account': active['account']}
 
 
 def bind(config, confirmation):
-    idle_required()
+    idle_required(config)
+    ac.check_registration(config)
     state = inspect_identity(config, prepare=True)
     signature = ac.fingerprint(state)
     if confirmation != signature:
@@ -93,7 +94,8 @@ def bind(config, confirmation):
 
 def start_bridge(config, executable):
     """Independent USERPROFILE only for the daemon child; no global env changes."""
-    idle_required()
+    idle_required(config)
+    ac.check_registration(config)
     probe = socket.socket()
     try:
         if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
@@ -150,7 +152,7 @@ def child_command(config, command, args):
 
 
 def execute(config, token, command, args):
-    ac.no_inflight_command()
+    ac.no_inflight_command(config)
     active = require_active(config, token)
     ac.check_environment(config, active['profile_snapshot'])
     argv = child_command(config, command, args)
@@ -163,10 +165,15 @@ def execute(config, token, command, args):
     # Preserve the caller's cwd so paths to decisions/greetings retain their meaning.
     emit(dict(ac.metadata(), account=active['account'], browser=active['browser'], run=token, command=command))
     started = time.monotonic()
-    proc = subprocess.Popen(argv, env=env)
-    inflight = ac.CONTROL_DIR / 'inflight.json'
+    # The child cannot execute until its durable PID record exists. If the
+    # parent dies before releasing the gate, EOF makes the child exit safely.
+    proc = subprocess.Popen([*argv[:3], 'scripts.account_worker', *argv[3:]],
+                            env=env, stdin=subprocess.PIPE)
+    inflight = ac.account_dir(config) / 'inflight.json'
     try:
         atomic_write_json(inflight, {'pid': proc.pid, 'run': token})
+        proc.stdin.write((token + '\n').encode('ascii'))
+        proc.stdin.close()
         return proc.wait()
     except BaseException:
         if proc.poll() is None:
@@ -174,6 +181,8 @@ def execute(config, token, command, args):
             proc.wait(timeout=10)
         raise
     finally:
+        if not proc.stdin.closed:
+            proc.stdin.close()
         if proc.poll() is not None and inflight.exists():
             inflight.unlink()
         try:
@@ -184,6 +193,36 @@ def execute(config, token, command, args):
                                           exit_code=proc.poll()), ensure_ascii=False) + '\n')
         except OSError as error:
             print(f'耗时日志写入失败：{error}', file=sys.stderr)
+
+
+def legacy_end(config, token):
+    """Drain an old serial run without moving or clearing delivery history."""
+    with ac.file_lock(ac.CONTROL_DIR / 'command.lock', timeout=5):
+        path = ac.CONTROL_DIR / 'active.json'
+        if not path.exists():
+            return None
+        active = ac.read_json(path)
+        if not token or active['run'] != token or active['account'] != config['account']:
+            raise ValueError('旧版账户或 --run 不匹配，不能结束其他任务')
+        ac.check_inflight(ac.CONTROL_DIR / 'inflight.json')
+        finished = dict(active, ended=datetime.now(timezone.utc).isoformat())
+        atomic_write_json(Path(active['workdir']) / 'runs' / (token + '.json'), finished)
+        path.unlink()
+        return {'ended': token, 'account': active['account'], 'legacy': True}
+
+
+def status(config):
+    # Atomic JSON snapshots remain readable while another command holds locks.
+    active = active_run(config)
+    legacy_path = ac.CONTROL_DIR / 'active.json'
+    try:
+        legacy = ac.read_json(legacy_path)
+    except FileNotFoundError:
+        legacy = None
+    keys = ('account', 'browser', 'run', 'started')
+    return {'account': config['account'],
+            'active': {k: active[k] for k in keys} if active else None,
+            'legacy_active': {k: legacy[k] for k in keys} if legacy else None}
 
 
 def main():
@@ -201,24 +240,31 @@ def main():
     opts = parser.parse_args()
     try:
         config = ac.load_account(opts.config)
-        with ac.command_lock():
-            if opts.command == 'status':
-                active = active_run()
-                emit({'active': {k: active[k] for k in ('account', 'browser', 'run', 'started')} if active else None})
-            elif opts.command == 'begin':
+        if opts.command == 'status':
+            emit(status(config))
+            return 0
+        if opts.command == 'bridge-status':
+            emit(bridge_status(config))
+            return 0
+        if opts.command == 'end':
+            finished = legacy_end(config, opts.run)
+            if finished:
+                emit(finished)
+                return 0
+        with ac.command_lock(config):
+            if opts.command == 'begin':
                 emit(begin(config))
             elif opts.command == 'end':
                 emit(end(config, opts.run))
             elif opts.command == 'bind':
                 emit(bind(config, opts.confirm))
             elif opts.command == 'inspect':
-                idle_required()
+                idle_required(config)
+                ac.check_registration(config)
                 state = inspect_identity(config, prepare=True)
                 emit(dict(state, confirm=ac.fingerprint(state)))
             elif opts.command == 'bridge-start':
                 emit(start_bridge(config, opts.bridge_exe))
-            elif opts.command == 'bridge-status':
-                emit(bridge_status(config))
             else:
                 return execute(config, opts.run, opts.command, opts.args)
         return 0

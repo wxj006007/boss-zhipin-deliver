@@ -312,7 +312,7 @@ def kill_other_boss_scripts():
     返回被杀死的 pid 列表。
     """
     if assert_run():
-        raise RuntimeError('账户模式通过串行占用管理任务，禁止清场其他进程')
+        raise RuntimeError('账户模式通过账户与浏览器端点锁管理任务，禁止清场其他进程')
     killed = []
     for pid in _list_other_boss_script_pids():
         try:

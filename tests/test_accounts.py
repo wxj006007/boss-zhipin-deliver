@@ -43,36 +43,37 @@ class AccountTests(unittest.TestCase):
         return ac.load_account(path)
 
     def begin(self, config):
-        with ac.command_lock():
+        with ac.command_lock(config):
             return runner.begin(config)
 
     def use_context(self):
-        state = runner.active_run()
+        state = runner.active_run(self.a)
         self.stack.enter_context(patch.dict(os.environ, {ac.CONTEXT_ENV: json.dumps(state)}))
         return state
 
-    def test_serial_a_b_a_and_profile_snapshots_are_independent(self):
+    def test_parallel_a_b_and_profile_snapshots_are_independent(self):
         start_a = self.begin(self.a)
+        start_b = self.begin(self.b)
         with self.assertRaisesRegex(RuntimeError, '尚未结束'):
-            self.begin(self.b)
+            self.begin(self.a)
         state = self.use_context()
         Path(self.a['profile']).write_text('{"role_summary":"changed"}', encoding='utf-8')
         self.assertEqual(config_v3.load_profile()['role_summary'], 'a岗位')
         self.assertEqual(ac.read_json(self.b['profile'])['role_summary'], 'b岗位')
-        with ac.command_lock():
+        with ac.command_lock(self.a):
             runner.end(self.a, start_a['run'])
         os.environ.pop(ac.CONTEXT_ENV)
-        start_b = self.begin(self.b)
+        self.assertEqual(runner.active_run(self.b)['run'], start_b['run'])
         self.assertNotEqual(start_b['run'], state['run'])
-        with ac.command_lock():
+        with ac.command_lock(self.b):
             runner.end(self.b, start_b['run'])
         start_a2 = self.begin(self.a)
         self.assertNotEqual(start_a2['run'], start_a['run'])
 
     def test_command_lock_rejects_overlapping_process(self):
         # A real second process, not a thread-local mock.
-        code = f'from pathlib import Path\nfrom scripts import accounts as a\na.CONTROL_DIR=Path({str(ac.CONTROL_DIR)!r})\nwith a.command_lock():\n print("unexpected")'
-        with ac.command_lock():
+        code = f'from pathlib import Path\nfrom scripts import accounts as a\na.CONTROL_DIR=Path({str(ac.CONTROL_DIR)!r})\nwith a.command_lock({self.a!r}):\n print("unexpected")'
+        with ac.command_lock(self.a):
             result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('unexpected', result.stdout)
@@ -91,7 +92,7 @@ class AccountTests(unittest.TestCase):
         (Path(self.a['workdir']) / 'stream_progress.json').write_text('{}')
         with self.assertRaisesRegex(ValueError, '未归属'):
             self.begin(self.a)
-        self.assertIsNone(runner.active_run())
+        self.assertIsNone(runner.active_run(self.a))
 
     def test_wrong_browser_account_and_missing_identity_are_rejected(self):
         for state in [dict(browser='chrome', identity=self.a['expected_identity']),
@@ -140,12 +141,12 @@ class AccountTests(unittest.TestCase):
 
     def test_orphan_command_blocks_end_until_it_exits(self):
         info = self.begin(self.a)
-        runner.atomic_write_json(ac.CONTROL_DIR / 'inflight.json', {'pid': os.getpid(), 'run': info['run']})
+        runner.atomic_write_json(ac.account_dir(self.a) / 'inflight.json', {'pid': os.getpid(), 'run': info['run']})
         with self.assertRaises(RuntimeError):
             runner.end(self.a, info['run'])
         with patch.object(ac, 'process_alive', return_value=False):
             runner.end(self.a, info['run'])
-        self.assertIsNone(runner.active_run())
+        self.assertIsNone(runner.active_run(self.a))
 
     def test_bind_requires_confirmation_for_exact_identity(self):
         config = dict(self.a, expected_identity=None)
@@ -180,6 +181,39 @@ process.stdout.write(JSON.stringify({clicked:sandbox.clicked,error}));
         self.begin(self.a)
         with self.assertRaises(ValueError):
             ac.register(dict(self.b, expected_identity=self.a['expected_identity']))
+
+    def test_idle_foreign_endpoint_is_rejected_before_browser_navigation(self):
+        self.begin(self.a)
+        foreign = dict(self.b, port=self.a['port'])
+        with patch.object(runner, 'verify_identity') as verify:
+            with ac.command_lock(foreign), self.assertRaises(ValueError):
+                runner.begin(foreign)
+            verify.assert_not_called()
+        with self.assertRaises(ValueError):
+            ac.check_registration(foreign)
+
+    def test_changed_config_can_end_original_run_without_touching_other_account(self):
+        a, b = self.begin(self.a), self.begin(self.b)
+        changed = dict(self.a, port=12345, workdir=str(self.root / 'different'), profile='missing')
+        with ac.command_lock(changed):
+            runner.end(changed, a['run'])
+        self.assertIsNone(ac.active_run(self.a))
+        self.assertEqual(ac.active_run(self.b)['run'], b['run'])
+        self.assertTrue(ac.read_json(Path(self.a['workdir']) / 'runs' / (a['run'] + '.json'))['ended'])
+
+    def test_orphan_is_account_local_and_stale_context_is_rejected(self):
+        a, b = self.begin(self.a), self.begin(self.b)
+        state = ac.active_run(self.a)
+        atomic = runner.atomic_write_json
+        atomic(ac.account_dir(self.a) / 'inflight.json', {'pid': os.getpid(), 'run': a['run']})
+        with ac.command_lock(self.b):
+            runner.end(self.b, b['run'])
+        with self.assertRaises(RuntimeError):
+            runner.end(self.a, a['run'])
+        with patch.object(ac, 'process_alive', return_value=False):
+            runner.end(self.a, a['run'])
+        with self.assertRaises(RuntimeError):
+            ac.assert_run(state)
 
 
 class BridgeRoutingTests(unittest.TestCase):

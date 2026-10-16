@@ -14,7 +14,7 @@
 ## 保存修改
 
 在真实目录执行 `git status`、`git diff`，核对后按需 `git add` 和 `git commit`。
-避免两个 Agent 同时编辑同一份代码。投递第一版仍串行运行：旧入口使用 `boss-main`，新账户入口显式选择独立端点和 session，并以 begin/end 控制整轮占用。
+避免两个 Agent 同时编辑同一份代码。账户入口支持 A/Edge 与 B/Chrome 并行：每个执行进程固定配置、端点、session 和 run；同一账户及同一浏览器端点仍互斥。旧入口使用 `boss-main`，启用多账户后必须走账户入口。
 回滚或切换版本应避开运行中的任务。
 
 个人配置 `user_profile.json`、记录 `boss_applied.json`、Python 缓存及临时备份由 `.gitignore` 排除。
@@ -27,11 +27,21 @@
 运行数据和 HTML 默认仍位于 `D:\Dev\code\my_github\boss-zhipin-assistant\boss-data`，也可通过 `BOSS_WORKDIR` 指定。
 统一入口不会自动扩大 Agent 的文件写入或网络权限。
 
-## 独立账户与串行切换
+## 独立账户与并行运行
 
 使用 `scripts/run_account.py --config <配置文件>` 显式选择账户。配置示例在 `examples/`，本机 A/Edge 和 B/Chrome 的配置、独立画像副本在 Git 忽略的 `accounts/a/`、`accounts/b/`。旧历史不自动迁移。
 
-完整的扩展连接、身份绑定、begin/end、逐卡/批量命令及故障恢复步骤见 [账户操作说明](references/accounts.md)。本版不支持两个账户同时投递。
+完整的扩展连接、身份绑定、begin/end、并行示例及故障恢复步骤见 [账户操作说明](references/accounts.md)。两个终端或智能体可以分别操作 A、B，各自独立 begin/end；同一账户不能同时运行两条操作命令。
+
+运行状态位于 `.account-runtime/accounts/<账户>/`；浏览器端点锁位于 `.account-runtime/targets/`。共享注册表仅在检查和写入时短暂加锁。历史已投和 uncertain 继续留在各自数据目录，不因 end 或重新 begin 清空。升级前应等旧命令结束；如果仍有旧版活动记录，使用原账户和 run 执行 end 后再 begin，不删除锁或历史文件。
+
+离线测试（模拟身份和本地假桥接，不发送消息）：
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+并发测试使用独立临时目录和真实 Python 子进程，覆盖双账户同时执行、同账户/同端点互斥、父进程崩溃、注册冲突、历史与报告隔离及旧版运行收尾。2026-10-16 经用户授权完成真实 A/Edge、B/Chrome 并行验证：各发送 1 条专属招呼并核验送达，发送命令执行区间重叠约 13.5 秒，记录归属独立且均无 uncertain。B 恢复原列表成功；A 送达后因原列表文档未保留触发停止，未重发。该结果验证一次双账户并行发送，不代表长时间连续投递的稳定性。
 
 ## 旧同步与恢复工具
 
