@@ -28,6 +28,8 @@ class GreetingTests(unittest.TestCase):
             patch.object(ps, "detect_page_anomaly", return_value=(False, "")),
             patch.object(g, "capture_list", return_value={'token': 'test'}),
             patch.object(g, "prepare_chat_tab"),
+            patch.object(g, "prepare_delivery_tab", return_value={'allowed': True}),
+            patch.object(g, "click_delivery_contact", return_value=True),
         ]
         self.mocks = [p.start() for p in self.patches]
         self.addCleanup(lambda: [p.stop() for p in reversed(self.patches)])
@@ -123,6 +125,26 @@ class GreetingTests(unittest.TestCase):
             result, _ = self.run_flow([{"ready": False}])
         cont.assert_called_once()
         self.assertFalse(result["delivered_ok"])
+
+    def test_chat_navigation_loading_waits_before_classifying_old_page(self):
+        self.mocks[0].side_effect = ['https://www.zhipin.com/web/geek/jobs', '/web/geek/chat']
+        self.mocks[5].side_effect = ['', 'unknown']
+        result, action = self.run_flow([
+            {'ready': False}, self.send_ready(input=''), {'ok': True},
+            self.send_ready(), {'ok': True},
+            self.send_ready(input='', messages=[{'id': 'new', 'text': '你好，相关项目经历', 'sent': True}]),
+        ])
+        self.assertTrue(result['delivered_ok'])
+        self.mocks[5].assert_called_once()
+        self.assertEqual(sum(c.args[1:2] == ('send',) for c in action.call_args_list), 1)
+
+    def test_persistent_unknown_detail_dialog_still_stops_without_sending(self):
+        self.mocks[0].side_effect = ['https://www.zhipin.com/web/geek/jobs',
+                                   '/job_detail/job-a.html', '/job_detail/job-a.html']
+        self.mocks[5].side_effect = ['', 'unknown', 'unknown']
+        result, action = self.run_flow([{'ready': False}])
+        self.assertTrue(result['uncertain'])
+        self.assertEqual(action.call_count, 1)
 
     def test_delayed_button_is_polled_then_clicked_only_once(self):
         result, action = self.run_flow([

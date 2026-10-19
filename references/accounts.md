@@ -59,7 +59,7 @@ python scripts/run_account.py --config $accountConfig --run <run-id> end
 
 `immediate status` 可查看本轮待审项和处理状态。旧 run 的审核标识不能用于新 run；历史已投及 uncertain 仍共用 `stream_progress.json`。`immediate_events.jsonl` 保存审核理由与阶段耗时，`command_timings.jsonl` 保存新旧命令耗时，便于对照；时间不足以单独证明轮换原因，需结合定位结果。
 
-专属话术在同一账户/session的聊天标签页发送，原列表标签页保持打开；送达后切回并核验 `list_return.preserved=true` 且未停止才继续。返回时核验同一文档、原节点、剩余岗位顺序和滚动位置；失败保留已送达结果并停止，不重新搜索或重复发送。聊天标签页按岗位ID精确选择会话，遇已有草稿不切换、不覆盖。下面保留A账户的旧live示例，B同样可用自己的配置执行该兼容入口：
+专属话术在点击「立即沟通」前，先从已审卡片读取真实详情链接并在同一账户/session的另一标签页打开，核对账户、岗位和 JD 后发起沟通，原列表保持打开。已有聊天标签页仅在确认无草稿后复用；不会先在原列表发起沟通再分离。送达后切回并核验 `list_return.preserved=true` 且未停止才继续。返回时核验同一文档、原节点、剩余岗位顺序和滚动位置；失败保留已送达结果并停止，不重新搜索或重复发送。聊天页按岗位ID核对目标会话。下面保留A账户的旧live示例，B同样可用自己的配置执行该兼容入口：
 
 ```powershell
 python scripts/run_account.py --config accounts/a/account.json begin

@@ -7,7 +7,10 @@ import time
 
 from scripts.webbridge_client import evaluate, evaluate_once, SESSION
 from scripts.list_return import capture_list, restore_list
-from scripts.chat_tab import prepare_chat_tab, enter_chat_tab
+from scripts.chat_tab import prepare_chat_tab
+from scripts.delivery_tab import (prepare_delivery_tab, click_delivery_contact,
+                                  enter_delivery_chat as enter_chat_tab,
+                                  DeliveryReviewRequired)
 from scripts.account_browser import verify_identity, guarded_script
 from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 
@@ -117,7 +120,6 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
     from scripts import phase_stream as ps
 
     message = validate_greeting(message)
-    normalized_message = message.replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
     jid = job["jobId"]
     original_url = evaluate("location.href", session=session)
     if "/web/geek/jobs" not in (original_url or "") or not ps._panel_shows_job(jid, "", session):
@@ -140,9 +142,34 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
     except Exception as error:
         return {"delivered_ok": False, "stopped": True,
                 "reason": f"未能记录原列表，尚未点击沟通：{error}"}
-    clicked = evaluate_once(guarded_script(ps.CLICK_CHAT_JS), session=session)
-    if not str(clicked).startswith("CLICKED:"):
-        return {"delivered_ok": False, "reason": "未找到立即沟通按钮"}
+    def before_contact_failure(reason, **fields):
+        # No contact was initiated. Return to the original document without a
+        # reload, retaining the pending review if the caller needs to retry.
+        result = dict(delivered_ok=False, reason=reason, **fields)
+        try:
+            result['list_return'] = restore_list(list_context, jid, session)
+            if not result['list_return'].get('preserved'):
+                result['stopped'] = True
+        except Exception as error:
+            result.update(stopped=True, return_error=str(error))
+        return result
+
+    try:
+        activity = prepare_delivery_tab(list_context, jid, session, timeout)
+    except DeliveryReviewRequired as error:
+        return before_contact_failure(str(error), review_required=True)
+    except (ValueError, RuntimeError) as error:
+        return before_contact_failure(str(error), stopped=True)
+    job['hr_activity'] = activity
+    if not activity['allowed']:
+        return before_contact_failure(activity['reason'], skipped=True,
+                                      activity_filtered=True, hr_activity=activity)
+    try:
+        clicked = click_delivery_contact(list_context, jid, session)
+    except DeliveryReviewRequired as error:
+        return before_contact_failure(str(error), review_required=True)
+    if not clicked:
+        return before_contact_failure('独立详情页未确认目标沟通按钮，未点击沟通', stopped=True)
 
     deadline = time.monotonic() + timeout
     continued = False
@@ -154,21 +181,56 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
         state = chat_action(jid, session=session)
         if state.get("ready") and state.get("target"):
             break
+        # A successful detail-page click can navigate while the old document's
+        # fixed elements are still visible. Do not classify that transient DOM
+        # as an unknown dialog before giving navigation/editor loading time.
+        if not state.get('ready'):
+            path = evaluate('location.pathname', session=session)
+            if path == '/web/geek/chat':
+                time.sleep(.5)
+                continue
         popup = ps.read_popup_type(session)
         if popup == "daily_limit":
             return dict(uncertain("沟通上限，需核对本次状态"), daily_limit=True)
         if not continued and (popup == "greet_sent" or
-                              (not popup and ps._verify_delivered_on_page(session, jid))):
+                              (not popup and evaluate("location.pathname.startsWith('/job_detail/') && !![...document.querySelectorAll('.job-banner a.btn-startchat')].find(e=>e.innerText.trim()==='继续沟通')", session=session) is True)):
             continued = enter_chat_tab(list_context, jid, popup, session, timeout)
             # Opening/loading a sibling tab has its own bounded wait; give the
             # active conversation its full readiness timeout after selection.
             deadline = time.monotonic() + timeout
-        elif popup in ("not_interested", "resume_guide") or (popup == "unknown" and not state.get("ready")):
+        elif popup == 'unknown' and not state.get('ready'):
+            time.sleep(.5)
+            # Re-read once after the navigation transition. A persistent unknown
+            # dialog still stops; only a confirmed chat route may keep waiting.
+            if evaluate('location.pathname', session=session) == '/web/geek/chat':
+                continue
+            if ps.read_popup_type(session) == 'unknown':
+                return uncertain("出现未识别的沟通界面，需人工核对")
+        elif popup in ("not_interested", "resume_guide"):
             return uncertain("出现未识别的沟通界面，需人工核对")
         time.sleep(.5)
     else:
         return uncertain("未确认目标岗位的聊天输入框，未发送自定义文本")
 
+    return finish_greeting(job, message, list_context, session, timeout, state)
+
+
+def finish_greeting(job, message, list_context, session=SESSION, timeout=15, state=None):
+    """Send/verify once in a checked conversation, then restore the retained list.
+
+    Also usable after an explicitly audited interruption, without re-clicking
+    contact. Callers retain uncertain history until this returns a verified send.
+    """
+    from scripts import phase_stream as ps
+    message = validate_greeting(message)
+    normalized_message = message.replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
+    jid = job['jobId']
+    verify_identity()
+    def uncertain(reason):
+        return dict(delivered_ok=False, uncertain=True, stopped=True, reason=reason)
+    state = state if state is not None else chat_action(jid, session=session)
+    if not state.get('ready') or not state.get('target'):
+        return uncertain('目标会话尚未确认，不发送')
     if any(m.get("text") == normalized_message for m in state.get("messages", [])):
         return uncertain("当前会话已有相同招呼语，禁止重复发送")
     before = {m.get("id") for m in state.get("messages", [])}
@@ -214,7 +276,9 @@ def deliver_greeting(job, message, session=SESSION, timeout=15):
         confirmed = next((m for m in matches if m.get("sent")), None)
         if confirmed and state.get("ready") and state.get("input") == "":
             result = {"delivered_ok": True, "verify": True,
-                      "verification_source": "custom_greeting_message", "message_id": confirmed["id"]}
+                      "verification_source": "custom_greeting_message", "message_id": confirmed["id"],
+                      "source_tab_id": list_context.get('tab_id'),
+                      "delivery_tab_id": list_context.get('delivery_tab_id')}
             try:
                 restored = restore_list(list_context, jid, session)
                 result['list_return'] = restored
