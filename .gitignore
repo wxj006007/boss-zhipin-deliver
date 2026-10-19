@@ -13,6 +13,7 @@ boss_applied.json
 boss-data/
 .account-runtime/
 accounts/
+/.local-archive/
 
 # Third-party tip/donation QR codes (kept local only, not published)
 assets/
