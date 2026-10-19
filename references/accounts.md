@@ -75,7 +75,7 @@ python scripts/run_account.py --config accounts/a/account.json --run <run-id> en
 
 A、B 可以各自 `begin`，分别获得运行标识，无需等待另一账户结束。不要把 A 的标识交给 B。账号配置中的相对路径相对于配置文件；命令中的决策/话术文件路径相对于当前终端目录。将 A、B 的决策和话术文件分别保存在各自目录，不共享同名临时文件。
 
-统一入口也支持：`scan` → page_scan、`harvest` → harvest_pool、`batch` → pipeline_batch、`env`、`verify`、`diag`、`cleanup`。后三种报告/核验/诊断命令不另传 `--mode`，所有命令均不允许另传 `--workdir`。批量例：
+统一入口也支持：`scan` → page_scan、`harvest` → harvest_pool、`batch` → pipeline_batch、`env`、`verify`、`diag`、`cleanup`、`scroll-check`。报告/核验/诊断命令不另传 `--mode`，所有命令均不允许另传 `--workdir`。批量例：
 
 ```powershell
 python scripts/run_account.py --config accounts/a/account.json --run <run-id> scan Python "304,305,306" 1902 3 jd
@@ -83,6 +83,8 @@ python scripts/run_account.py --config accounts/a/account.json --run <run-id> ba
 ```
 
 是否实际投递仍取决于用户授权；配置、连接和只读验证不自动授权发送。
+
+后台加载诊断：`run_account.py --config <配置> --run <run> scroll-check --keyword <关键词> --steps 3`。该命令受账户/端点锁保护，仅滚动及读取页面，不提交决策、不发送消息；使用新后台标签测试后选回原标签，并将加载过程、原文档是否保留及前台标签是否变化写入当前账户的 `data/scroll_checks/`。诊断标签不自动关闭。A、B 可使用各自配置及 run 分别执行，无需前台窗口；同一账户仍串行。`loading/stalled` 不能视为已耗尽，保留原列表检查或重试。
 
 ## 故障与数据归属
 

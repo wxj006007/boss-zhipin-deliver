@@ -152,54 +152,28 @@ _RECOMMEND_END_MARKERS = ["没有更多了", "已经到底", "到底啦", "没�
 
 
 def _recommend_end_marker():
-    """检测推荐页是否已滚动到底（出现"没有更多了 / 已经到底"等底部文案）。"""
+    """只采信列表结束状态，不将岗位正文或暂时无增长当成到底。"""
+    from scripts.job_list_loading import read_state, is_exhausted
     try:
-        txt = evaluate("""(function(){
-            var n = document.querySelector('#main .job-list') || document.querySelector('.job-list');
-            var scope = (n && n.innerText) ? n.innerText : (document.body ? document.body.innerText : '');
-            return scope || '';
-        })()""") or ""
+        state = read_state(SESSION)
     except Exception:
         return None
-    for m in _RECOMMEND_END_MARKERS:
-        if m in txt:
-            return m
+    if is_exhausted(state):
+        return state.get('end_marker') or 'has_more_false'
     return None
 
 
 def _exhaust_recommend_feed(cap=80):
-    """反复滚动直到底部，返回 (exhausted, total, marker)。
-
-    适用于「推荐页」与「关键词搜索页」两类会懒加载的列表（用通用底部文案
-    检测，对两者都有效）。
-
-    懒加载稳健性修正（2026-08-02，用户实测质疑）：
-      ❌ 旧逻辑：先 extract_jobs 计数 → 再滚 1 次 → 仅等 1.4s → 连续 2 次
-         计数相等就判"稳定触底"。BOSS 一批加载若耗时 >1.4s，会在加载途中
-         被误判为"到底"而提前收尾，导致只翻到几十张就以为到底（实测一般
-         搜索页能懒加载到 450+ 张）。
-      ✅ 新逻辑：每次**先滚动（2 次）触发加载 → 等 3s 让批次渲染完成 → 再
-         计数**；连续 **4 次**计数稳定（每次间隔约 5s）才判触底；并优先以
-         底部文案（没有更多了/已经到底…）确认。cap 提到 80 防卡死。
-    """
-    prev = -1
-    stuck = 0
+    """后台加载到明确结束；超时、停滞和批次上限均返回未确认到底。"""
+    total = len(extract_jobs())
     for _ in range(cap):
-        scroll_jobs_list(times=2)   # 先滚动触发懒加载
-        time.sleep(3.0)             # 长等待：给 BOSS 一批网络+渲染留足时间
-        jobs = extract_jobs()
-        cnt = len(jobs)
-        marker = _recommend_end_marker()
-        if marker:
-            return True, cnt, marker
-        if cnt == prev:
-            stuck += 1
-            if stuck >= 4:
-                return True, cnt, "stable_no_growth"
-        else:
-            stuck = 0
-            prev = cnt
-    return True, (prev if prev >= 0 else len(extract_jobs())), "cap_reached"
+        result = scroll_jobs_list(times=1)
+        total = result['after']['count']
+        if result['confirmed_end']:
+            return True, total, result['after'].get('end_marker') or 'has_more_false'
+        if result['status'] in ('loading', 'stalled'):
+            return False, total, 'load_' + result['status']
+    return False, total, 'cap_reached_unconfirmed'
 
 
 def _delivered_jids():
@@ -581,12 +555,11 @@ def cmd_more():
     --more 还是已到底；随后由 cmd_next 正常呈现下一张卡（其 JSON 另起一行）。
     """
     before = len(extract_jobs())
-    scroll_jobs_list(times=3)
-    time.sleep(1.5)
+    loading = scroll_jobs_list(times=3)
     after = len(extract_jobs())
     grew = after > before
     print("LAZY " + json.dumps({"grew": grew, "before": before,
-                                 "after": after}, ensure_ascii=False))
+                                 "after": after, "loading": loading}, ensure_ascii=False))
     return cmd_next()
 
 
@@ -605,7 +578,8 @@ def cmd_exhaust():
     print(json.dumps({"exhausted": bool(exhausted), "marker": marker,
                       "total_visible": total,
                       "recommend_exhausted": bool(exhausted),
-                      "note": "推荐页已滚到底，关键词搜索已解锁（walk <关键词>）"},
+                      "note": ("推荐页已明确到底，关键词搜索已解锁" if exhausted
+                               else "尚未确认到底，保留页面并检查加载状态")},
                      ensure_ascii=False))
     return bool(exhausted)
 

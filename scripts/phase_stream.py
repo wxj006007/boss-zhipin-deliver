@@ -75,29 +75,13 @@ def search_url_for(query, city_code, job_type=""):
 
 
 def scroll_jobs_list(session=SESSION, times=1):
-    """滚动左侧岗位列表到底部，触发 BOSS 懒加载更多卡片。
+    """在当前账户后台标签页触发并核验懒加载，不切前台、不改变焦点。
 
-    适配推荐页与关键词搜索页：每次把 .job-list（或其最近可滚祖先 / 页面）滚到底，
-    等待 BOSS 渲染下一批。懒加载的真正「到底」由 _live_driver 的 _exhaust_recommend_feed
-    （滚动→等 3s→连续 4 次稳定才停）判定，本函数只负责单次触发。
+    返回 loaded/advanced/exhausted/loading/stalled；无新增或达到等待上限不等于到底。
+    exhausted 可能同时带回最后一批新岗位，调用方须先读它们再结束扫描。
     """
-    for _ in range(max(1, times)):
-        evaluate(r"""(function(){
-            var list = document.querySelector('#main .job-list') || document.querySelector('.job-list');
-            if (list && list.scrollHeight > list.clientHeight + 4) {
-                list.scrollTop = list.scrollHeight;
-            } else {
-                var p = list;
-                while (p && p !== document.body) {
-                    if (p.scrollHeight > p.clientHeight + 4 && p.clientHeight > 0) {
-                        p.scrollTop = p.scrollHeight; return;
-                    }
-                    p = p.parentElement;
-                }
-                window.scrollTo(0, document.body.scrollHeight);
-            }
-        })()""", session=session)
-        time.sleep(1.2)
+    from scripts.job_list_loading import advance
+    return advance(session=session, times=times)
 
 
 # ───────────────────────────────────────────────────────────

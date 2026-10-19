@@ -11,7 +11,7 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 
 账户 begin 后使用 `run_account.py --config <配置> --run <run> immediate start <关键词>` 导航一次，再交替调用 `immediate next` 和 `immediate decide <决策文件>`。每次 `next` 只返回一个岗位、完整 JD 和唯一 `review_id`；未提交决策时重复 `next` 只返回同一项，不读取下一张。
 
-`immediate step <决策文件>` 是同语义的单进程合并入口：先按决策发送，再读取下一岗，结果形如 `{"decided":…,"following":…}`。决策仍由智能体基于刚读到的 JD 作出、同一时刻只有一个待审岗位，只是把每岗两次进程调用并为一次，适合逐岗连续投递时减少进程与文件开销。`following` 若为 `next_deferred`（发送已成功但列表恢复失败触发停止），按下一节核对后恢复，不得跳过核对。
+`immediate step <决策文件>` 是同语义的单进程合并入口：先按决策发送，再读取下一岗，结果形如 `{"decided":…,"following":…}`。决策仍由智能体基于刚读到的 JD 作出、同一时刻只有一个待审岗位，只是把每岗两次进程调用并为一次，适合逐岗连续投递时减少进程与文件开销。`following.next_deferred` 须区分原因：加载停滞、仍在加载或扫描批次上限会返回 `view_exhausted=false`，应保留原页面重试 `next`；只有确有 uncertain 或列表返回失败导致停止，才按发送核对恢复流程处理。不能因加载延迟直接 reset/start。
 
 `next` 会吸收（仍逐条留痕）HR 活跃度不符的卡片后再返回可审岗位，单次最多吸收 10 张，超出则以 `activity_skipped` 返回，调用方继续 `next` 即可。
 
@@ -19,9 +19,17 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 
 投递前重新核对当前岗位与已审 JD，面板或正文发生变化返回 `review_required`，必须重新 `next` 审核，不能复用旧决策。发送复用已有送达核验与 uncertain 去重。点击沟通前记录原列表标签页、文档标识、岗位顺序和滚动位置；新专属话术路径保留列表页，点击「留在此页」关闭成功提示，在同一账户/session的聊天标签页按岗位ID选中目标会话并发送，送达后切回原列表，不重新 navigate 搜索 URL。只有原文档、节点、未投岗位集合和相对顺序均保留才继续；恢复失败或列表变化时保留已送达结果并停止，不能假称本页已看完或重新发送。
 
-下一次 `next` 读取真实 DOM，按岗位 ID 跳过本轮已处理/历史已投岗位，不依赖旧池或位置。`view_exhausted` 仅代表本次有限滚动范围没有未处理项，可切换关键词，不代表网站全部岗位已穷尽。浏览器缓存不保证每次命中，网站也可能主动更新列表；返回结果的 `list_return.preserved` 必须为 true，不能只看 URL 一样就认定保留成功。
+下一次 `next` 读取真实 DOM，按岗位 ID 跳过本轮已处理/历史已投岗位，不依赖旧池或位置。只有当前搜索列表明确返回无更多岗位且已处理最后一批，才返回 `view_exhausted=true/search_exhausted=true`；仍不代表网站全部岗位已穷尽。有限滚动次数、等待超时、卡片数不增长均不能作为耗尽依据。返回结果的 `list_return.preserved` 必须为 true，不能只看 URL 一样就认定保留成功。
 
 状态保存于账户目录 `immediate_state.json`，逐步记录于 `immediate_events.jsonl`，统一入口各命令耗时记录于 `command_timings.jsonl`。中断后在原 run 继续 `next`；有 uncertain 或停止状态先核对，不能通过 start/reset 绕过。收尾生成 report 并 end。详细命令见 [账户说明](references/accounts.md)。
+
+### 后台滚动加载（2026-10-19 修复，优先于下文历史耗尽判据）
+
+每个账户继续使用自己的端点、session 和锁，列表可一直处于后台，不需要额外屏幕或切到前台。`scroll_jobs_list` 现在通过 `job_list_loading.py` 定位列表滚动容器，滚到底并向容器、document、window 显式发送 scroll 事件，然后按新增岗位 ID、分页状态和加载状态核验结果。不调用前台激活或焦点模拟接口，不直接请求 BOSS 的分页 API。
+
+单批等待有上限，只在未加载且没有进展时有限重试事件；加载中不重复触发。返回 loaded/advanced 表示有进展，exhausted 表示当前列表明确结束，loading/stalled 表示尚未完成或停滞。EOF 同时带回最后一批岗位时仍须先逐岗审核。缺少可核验状态时不认定已到底；旧 walk 的稳定计数和滚动上限也不再作为确认到底的依据。
+
+只读后台验证命令：`run_account.py --config <账户配置> --run <run> scroll-check --keyword <关键词> --steps 3`。它在当前账户内新开后台诊断标签，记录每批状态，结束后选回原标签并核对原文档及前台标签是否变化；不发送投递、不改投递状态，证据保存在账户 `data/scroll_checks/`。诊断标签页保留，按用户要求关闭。2026-10-19 A/Edge 与 B/Chrome 已真实并行验证：同一 AI Agent 搜索条件下分别15→99岗、15→98岗，均在第7页 has_more=false；全程 hidden，原文档保留，前台标签未变，命令执行重叠15.648秒。画像、投递历史和待审核状态文件哈希未变，没有发送投递。此结果验证一次双账户后台加载，不代表长期运行或全网站供给已穷尽。
 
 ### 在独立标签页发起沟通（2026-10-19 修复，优先于下文旧发送路径）
 

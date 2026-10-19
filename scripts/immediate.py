@@ -98,6 +98,7 @@ class Immediate:
         self.page(state)
         started = time.monotonic()
         skipped = 0
+        loading = None
         for scroll in range(3):
             jobs = wb.extract_jobs()
             for job in jobs:
@@ -143,11 +144,26 @@ class Immediate:
                 self.event('read', started, jobId=jid, absorbed_activity_skips=skipped)
                 return dict(pending, awaiting_decision=True)
             self.save(state)
+            # A terminal response can contain the last batch. Only report EOF
+            # after scanning its DOM, not immediately after the scroll request.
+            if loading and loading.get('confirmed_end'):
+                self.event('exhausted', started, keyword=state['keyword'],
+                           absorbed_activity_skips=skipped, loading=loading)
+                return {'view_exhausted': True, 'search_exhausted': True,
+                        'activity_skipped_count': skipped, 'loading': loading,
+                        'hint': '当前搜索列表已明确返回无更多岗位；不代表网站全部供给已穷尽'}
             if scroll < 2:
-                ps.scroll_jobs_list(times=1)
-        self.event('exhausted', started, keyword=state['keyword'], absorbed_activity_skips=skipped)
-        return {'view_exhausted': True, 'activity_skipped_count': skipped,
-                'hint': '当前加载范围无未处理岗位，可换关键词；不代表网站全部岗位已穷尽'}
+                loading = ps.scroll_jobs_list(times=1)
+                if loading.get('status') in ('loading', 'stalled'):
+                    self.event('load_deferred', started, keyword=state['keyword'], loading=loading)
+                    return {'next_deferred': '列表加载未完成或暂未增长，不能认定已读尽',
+                            'view_exhausted': False, 'loading': loading,
+                            'activity_skipped_count': skipped,
+                            'hint': '保留当前页面，可重试 next；若反复停滞则检查连接或页面加载状态'}
+        self.event('scan_limit', started, keyword=state['keyword'], loading=loading)
+        return {'next_deferred': '本次扫描达到批次上限，尚未确认到底',
+                'view_exhausted': False, 'activity_skipped_count': skipped,
+                'hint': '继续在原页面调用 next，不因本次批次上限重新搜索或判定耗尽'}
 
     def decide(self, decision):
         progress = self.guard()

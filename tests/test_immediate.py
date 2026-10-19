@@ -29,7 +29,8 @@ class ImmediateTests(unittest.TestCase):
         self.stack.enter_context(patch.object(im.wb, 'evaluate', return_value=self.state['url']))
         self.stack.enter_context(patch.object(im.wb, 'detect_page_anomaly', return_value=(False, '')))
         self.stack.enter_context(patch.object(im.ps, 'card_exists', return_value=True))
-        self.stack.enter_context(patch.object(im.ps, 'scroll_jobs_list'))
+        self.scroll = self.stack.enter_context(patch.object(im.ps, 'scroll_jobs_list',
+            return_value={'status': 'exhausted', 'confirmed_end': True}))
         self.cards = self.stack.enter_context(patch.object(im.wb, 'extract_jobs', return_value=[{'jobId': 'a'}]))
         self.open = self.stack.enter_context(patch.object(im.drv, 'cmd_open', return_value={
             'panel_ok': True, 'detail': '完整JD', 'hr_activity': {'allowed': True}}))
@@ -100,6 +101,43 @@ class ImmediateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.flow.decide(self.decision(item))
         self.send.assert_not_called()
+
+    def test_stalled_loading_never_reports_exhausted(self):
+        self.state['handled'] = {'a': 'rejected'}
+        self.flow.save(self.state)
+        self.scroll.return_value = {'status': 'stalled', 'confirmed_end': False}
+        result = self.flow.next()
+        self.assertFalse(result['view_exhausted'])
+        self.assertIn('next_deferred', result)
+        self.open.assert_not_called()
+        events = [json.loads(s) for s in (self.root / 'immediate_events.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertEqual(events[-1]['stage'], 'load_deferred')
+
+    def test_last_batch_is_reviewed_before_confirmed_end_is_returned(self):
+        self.state['handled'] = {'a': 'rejected'}
+        self.flow.save(self.state)
+        self.cards.side_effect = [[{'jobId': 'a'}], [{'jobId': 'a'}, {'jobId': 'last'}]]
+        result = self.flow.next()
+        self.assertEqual(result['job']['jobId'], 'last')
+        self.assertTrue(result['awaiting_decision'])
+        self.scroll.assert_called_once()
+
+    def test_only_explicit_terminal_loading_result_reports_exhaustion(self):
+        self.state['handled'] = {'a': 'rejected'}
+        self.flow.save(self.state)
+        result = self.flow.next()
+        self.assertTrue(result['view_exhausted'])
+        self.assertTrue(result['search_exhausted'])
+        self.open.assert_not_called()
+
+    def test_scan_budget_is_not_exhaustion(self):
+        self.state['handled'] = {'a': 'rejected'}
+        self.flow.save(self.state)
+        self.scroll.return_value = {'status': 'advanced', 'confirmed_end': False}
+        result = self.flow.next()
+        self.assertFalse(result['view_exhausted'])
+        self.assertIn('next_deferred', result)
+        self.assertEqual(self.scroll.call_count, 2)
 
     def test_changed_jd_driver_never_starts_communication(self):
         # Exercise the saved actual driver with browser primitives mocked.

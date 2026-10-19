@@ -61,17 +61,22 @@ def main():
         return 1
 
     seen = {}
+    loading = None
     for i in range(max(0, scrolls) + 1):
         for j in wb.extract_jobs() or []:
             if j.get("jobId"):
                 seen[j["jobId"]] = j
         if i < scrolls:
-            try:
-                from scripts.phase_stream import scroll_jobs_list
-                scroll_jobs_list(times=1)
-            except Exception:
-                pass
-            time.sleep(2.0)
+            from scripts.phase_stream import scroll_jobs_list
+            loading = scroll_jobs_list(times=1)
+            if loading['status'] in ('loading', 'stalled'):
+                break
+            if loading['confirmed_end']:
+                # EOF may arrive together with the last page of cards.
+                for j in wb.extract_jobs() or []:
+                    if j.get('jobId'):
+                        seen[j['jobId']] = j
+                break
 
     pp = os.path.join(workdir, "stream_progress.json")
     done = set()
@@ -101,7 +106,8 @@ def main():
     atomic_write_json(pool_file, {"scale": scale, "job_type": job_type, "jobs": list(pool.values())})
 
     print(json.dumps({"ok": True, "kw": kw, "page_url": cur,
-                      "cards_total": len(seen), "available": len(rows)}, ensure_ascii=False))
+                      "cards_total": len(seen), "available": len(rows),
+                      "loading": loading}, ensure_ascii=False))
     for j in rows:
         print(f"{j['jobId']}|{j.get('company')}|{j.get('scale')}|{j.get('city')}|"
               f"{j.get('title')}|{j.get('salary')}|{j.get('degree')}|HR:{display_activity(j.get('hr_activity'))}")
