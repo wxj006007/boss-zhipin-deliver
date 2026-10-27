@@ -439,7 +439,7 @@ def cmd_deliver(jid, company="", salary="", industry="", direction="", greeting=
             save_state(st)
             return {"delivered_ok": False, "stopped": stopped, "detail": op,
                     "reason": "目标岗位面板未确认，不发送自定义招呼语"}
-        # 默认招呼保留 WorkBuddy 的兜底：由 deliver_click 重新定位并核验。
+        # 默认招呼沿用兼容入口的兜底：由 deliver_click 重新定位并核验。
     if greeting is not None and not (op.get("detail") or "").strip():
         return {"delivered_ok": False, "reason": "未读取到当前岗位JD，不发送自定义招呼语"}
     job = {"jobId": jid, "title": op.get("title", ""), "company": company,

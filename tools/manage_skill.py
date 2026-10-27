@@ -1,4 +1,4 @@
-"""Version the installed WorkBuddy skill and restore a committed revision."""
+"""Version a separately installed skill and restore a committed revision."""
 from pathlib import Path, PurePosixPath
 import argparse
 import datetime
@@ -11,7 +11,6 @@ import tempfile
 import uuid
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_INSTALLED = Path.home() / '.workbuddy/skills/boss-zhipin-deliver'
 PROFILE_FILES = {'user_profile.json', 'boss_applied.json'}
 ROOT_FILES = PROFILE_FILES | {'SKILL.md'}
 PAYLOAD_DIRS = {'scripts', 'references', 'assets'}
@@ -140,10 +139,11 @@ def restore(installed, revision, include_profile=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--installed-dir', type=Path, default=DEFAULT_INSTALLED)
+    parser.add_argument('--installed-dir', type=Path, required=True,
+                        help='Path to a separate installed skill directory.')
     sub = parser.add_subparsers(dest='action', required=True)
     sub.add_parser('sync', help='Copy installed skill into this repository, then review and commit.')
-    command = sub.add_parser('restore', help='Restore committed files to WorkBuddy, backing up current files first.')
+    command = sub.add_parser('restore', help='Restore committed files to the installed directory, backing up current files first.')
     command.add_argument('revision', nargs='?', default='baseline-2026-10-13')
     command.add_argument('--include-profile', action='store_true', help='Also restore user_profile.json and boss_applied.json.')
     args = parser.parse_args()

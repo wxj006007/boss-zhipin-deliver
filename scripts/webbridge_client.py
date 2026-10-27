@@ -15,7 +15,6 @@ WebBridge HTTP 客户端 v4 — 共享模块
 v4 变更 (2026-07-30):
   - extract_jobs() 增加 DOM 兜底：Vue __vue__ 私有 API 失效时，
     改用已验证的 DOM 选择器 (.job-name/.boss-name/.company-location) 提取
-  - clean_pid_files() 将 ~/.trae-cn/*.pid 改为 ~/.workbuddy/*.pid
   - register_signal_guard() 增加 SIGINT（Windows 亦可捕获）
 
 用法:
@@ -326,8 +325,8 @@ def kill_other_boss_scripts():
 
 
 # 标签页独占锁文件（记录当前占用脚本的 pid，供监督者读取"谁在控制 tab"）
-_TAB_LOCK_PATH = os.path.expanduser(
-    "~/.workbuddy/skills/boss-zhipin-deliver/.tab_lock")
+_TAB_LOCK_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), ".tab_lock")
 
 
 def acquire_tab_lock(script_name="unknown"):
@@ -738,13 +737,12 @@ def ensure_active_tab(session=SESSION, timeout_wait=10):
 
 
 def clean_pid_files():
-    """清理 WebBridge / WorkBuddy PID 残留文件"""
+    """清理 WebBridge PID 残留文件。"""
     if assert_run():
         raise RuntimeError('账户模式禁止清理公共 PID 文件')
     pid_patterns = [
         os.path.expanduser("~/.kimi-webbridge/daemon.pid"),
         os.path.expanduser("~/.kimi-webbridge*.pid"),
-        os.path.expanduser("~/.workbuddy/*.pid"),
     ]
     cleaned = []
     for pattern in pid_patterns:
@@ -917,7 +915,6 @@ __updated__ = "2026-07-30"
 __changes__ = """
 v4.0.0 (2026-07-30):
   - extract_jobs() 增加 DOM 兜底提取（Vue __vue__ 私有 API 失效时自动切换）
-  - clean_pid_files() 清理路径改为 ~/.workbuddy/*.pid（迁移自 TRAE ~/.trae-cn）
   - register_signal_guard() 增加 SIGINT 捕获
   - 所有调用脚本改为相对 __file__ 动态解析 SKILL_DIR，摆脱硬编码路径
 """

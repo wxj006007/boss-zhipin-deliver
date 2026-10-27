@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 HOST, PORT = "127.0.0.1", 10086
-SKILL = Path(r"C:\Users\wxj20\.workbuddy\skills\boss-zhipin-deliver")
+SKILL = Path(__file__).resolve().parents[1]
 CONFIG = SKILL / "accounts" / "b" / "account.json"
 DEADLINE = time.time() + 4 * 3600  # 4h coverage
 
