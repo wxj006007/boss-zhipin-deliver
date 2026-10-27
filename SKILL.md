@@ -5,6 +5,8 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 
 # BOSS直聘自动化投递 Skill v6.13（逐岗读取、审核后立即投递）
 
+本技能由能够读取 `SKILL.md`、执行本地 Python 命令并读写配置与结果文件的 AI agent 运行，安装目录由实际环境决定。浏览器操作依赖 Kimi WebBridge 和已登录 BOSS 直聘的 Chrome 或 Edge；报告使用当前环境可用的文件交付能力展示。下文命令在包含 `SKILL.md` 的技能目录中执行，`$skill` 表示该目录的实际路径。
+
 ## 默认流程：逐岗立即投递（优先于下文历史流程）
 
 真实投递默认使用 `immediate`：当前列表选一张 → 读完整 JD → 智能体结合账户画像审核并生成专属话术 → 合适立即发送、不合适记录拒绝 → 回到列表重新选择未处理岗位。不得先积攒多个待审/待投岗位再回头发送。仅用户明确选择批量或对照测试时使用下文 `harvest/jdc/go`。
@@ -325,7 +327,7 @@ python scripts/run_account.py --config $accountConfig --run $runId end
 ### 命令（scripts/_live_driver.py）
 
 ```powershell
-$skill = "$HOME\.workbuddy\skills\boss-zhipin-deliver"
+$skill = "<本技能实际所在的目录>"
 # ① 【默认起点·硬规则】进 BOSS 推荐页，游标回顶部，只呈现"下一张卡"的表面（v6.9 单卡制，绝不整列表）
 python "$skill\scripts\_live_driver.py" walk
 # ② 对当前这一张：表面命中 → 打开它读 JD（一次只开一张）
@@ -508,7 +510,7 @@ python scripts/run_account.py --config $accountConfig --run $runId verify-full
 ## 文件结构（安装后）
 
 ```
-技能目录: ~/.workbuddy/skills/boss-zhipin-deliver/
+<技能目录>/
 ├── SKILL.md                    ← 本文件
 ├── user_profile.json           ← ★ 个人档案（零硬编码入口）：role_summary/prefer/avoid 自由文本
 ├── boss_applied.json           ← 历史投递样本（参考，不参与运行）
@@ -542,8 +544,8 @@ python scripts/run_account.py --config $accountConfig --run $runId verify-full
 
 ```powershell
 kimi-webbridge status
-# 清理 PID 残留
-python -c "import os,glob; [os.remove(f) for f in glob.glob(os.path.expanduser('~/.kimi-webbridge*.pid')) + glob.glob(os.path.expanduser('~/.workbuddy/*.pid')) if os.path.exists(f)]"
+# 旧单账户模式：确认默认桥接已停止且仅有 PID 残留后清理；账户模式按账户说明恢复
+python -c "from scripts.webbridge_client import clean_pid_files; print(clean_pid_files())"
 kimi-webbridge start
 python -c "from scripts.webbridge_client import health_check; print(health_check())"
 ```
@@ -557,7 +559,7 @@ python -c "from scripts.webbridge_client import health_check; print(health_check
 ### 单独运行检测
 
 ```powershell
-python "$HOME\.workbuddy\skills\boss-zhipin-deliver\scripts\env_check.py"
+python scripts/env_check.py
 ```
 
 ---
@@ -572,7 +574,7 @@ python "$HOME\.workbuddy\skills\boss-zhipin-deliver\scripts\env_check.py"
    ```
    该函数（`write_summary_page`）读取 `工作目录/stream_progress.json`，按每条投递记录的 `direction` 字段分组，
    输出 `<工作目录>/投递汇总.html`——**单文件自包含**，任何环境（预览面板/分享/本地）打开都能正常显示；
-2. **智能体必须用 `present_files` 把 `投递汇总.html` 展示给用户**（预览面板内直接显示本轮投递明细表），**不可省略**；
+2. **智能体必须通过当前环境可用的文件预览、附件或本地文件链接，将 `投递汇总.html` 交付给用户**，方便用户查看本轮投递明细，**不可省略**；
 3. 页面内置「投递说明」：本轮实投份数、覆盖方向数、verify 状态、AI 语义终审说明；薪资下限低于门槛的会自动标红提示。
 
 > **主交付物统一为 `投递汇总.html`**。
