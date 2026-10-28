@@ -1,0 +1,5 @@
+{
+  "browser": "chrome",
+  "bridge": {"host": "127.0.0.1", "port": 10086},
+  "session": "boss"
+}

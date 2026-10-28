@@ -70,7 +70,7 @@
 **严重等级: 🟡 中**
 
 **现象**: `kimi-webbridge.exe start` 输出 `daemon started` 但立即退出（exit code 0），
-daemon 日志显示 `Error: write pid: open C:\Users\W\.kimi-webbridge\daemon.pid: The file exists.`
+daemon 日志显示 `Error: write pid: open <用户目录>/.kimi-webbridge/daemon.pid: The file exists.`
 
 **根因**: daemon 在启动时创建 `daemon.pid` 锁文件。异常崩溃/强杀后锁文件残留，
 新 daemon 认为已有实例在运行，自动退出。
@@ -347,7 +347,7 @@ if any(kw in salary for kw in EXCLUDE_SALARY):
 python3 -c "from scripts.webbridge_client import WebBridge; wb=WebBridge(); print(wb.health_check())"
 
 # 启动
-Start-Process "C:\Users\W\.kimi-webbridge\bin\kimi-webbridge.exe" -ArgumentList "start"
+python scripts/manage_accounts.py --config <账户配置> --connection <连接配置> bridge-start
 Start-Sleep -Seconds 5
 ```
 

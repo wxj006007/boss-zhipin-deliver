@@ -25,7 +25,7 @@ import fnmatch
 import argparse
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from scripts.accounts import assert_workdir
+from scripts.execution_context import assert_workdir
 
 # 永远不动的文件 / 模式
 PRESERVE_FILES = set()

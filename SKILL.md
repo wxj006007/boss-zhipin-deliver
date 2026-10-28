@@ -1,6 +1,6 @@
 ---
 name: boss-zhipin-deliver
-description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已登录的 Chrome 或 Edge，支持独立账户配置与跨账户并行，同账户串行；读取岗位 JD，由智能体审核匹配度并生成专属打招呼语，填写发送后回读核验，收尾生成投递汇总页。触发词：BOSS直聘、投递简历、自动投递、找工作、投岗位、boss投递。
+description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已登录的 Chrome 或 Edge，支持多账户、独立浏览器连接与跨账户并行，同账户串行；读取岗位 JD，由智能体审核匹配度并生成专属打招呼语，填写发送后回读核验，收尾生成投递汇总页。触发词：BOSS直聘、投递简历、自动投递、找工作、投岗位、boss投递。
 ---
 
 # BOSS直聘自动化投递 Skill v6.13（逐岗读取、审核后立即投递）
@@ -27,11 +27,11 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 
 ### 后台滚动加载（2026-10-19 修复，优先于下文历史耗尽判据）
 
-每个账户继续使用自己的端点、session 和锁，列表可一直处于后台，不需要额外屏幕或切到前台。`scroll_jobs_list` 现在通过 `job_list_loading.py` 定位列表滚动容器，滚到底并向容器、document、window 显式发送 scroll 事件，然后按新增岗位 ID、分页状态和加载状态核验结果。不调用前台激活或焦点模拟接口，不直接请求 BOSS 的分页 API。
+每轮运行使用选定的端点、session 和锁，列表可一直处于后台，不需要额外屏幕或切到前台。`scroll_jobs_list` 现在通过 `job_list_loading.py` 定位列表滚动容器，滚到底并向容器、document、window 显式发送 scroll 事件，然后按新增岗位 ID、分页状态和加载状态核验结果。不调用前台激活或焦点模拟接口，不直接请求 BOSS 的分页 API。
 
 单批等待有上限，只在未加载且没有进展时有限重试事件；加载中不重复触发。返回 loaded/advanced 表示有进展，exhausted 表示当前列表明确结束，loading/stalled 表示尚未完成或停滞。EOF 同时带回最后一批岗位时仍须先逐岗审核。缺少可核验状态时不认定已到底；旧 walk 的稳定计数和滚动上限也不再作为确认到底的依据。
 
-只读后台验证命令：`run_account.py --config <账户配置> --run <run> scroll-check --keyword <关键词> --steps 3`。它在当前账户内新开后台诊断标签，记录每批状态，结束后选回原标签并核对原文档及前台标签是否变化；不发送投递、不改投递状态，证据保存在账户 `data/scroll_checks/`。诊断标签页保留，按用户要求关闭。2026-10-19 A/Edge 与 B/Chrome 已真实并行验证：同一 AI Agent 搜索条件下分别15→99岗、15→98岗，均在第7页 has_more=false；全程 hidden，原文档保留，前台标签未变，命令执行重叠15.648秒。画像、投递历史和待审核状态文件哈希未变，没有发送投递。此结果验证一次双账户后台加载，不代表长期运行或全网站供给已穷尽。
+只读后台验证命令：`run_account.py --config <账户配置> --run <run> scroll-check --keyword <关键词> --steps 3`。它在当前账户内新开后台诊断标签，记录每批状态，结束后选回原标签并核对原文档及前台标签是否变化；不发送投递、不改投递状态，证据保存在账户 `data/scroll_checks/`。诊断标签页保留，按用户要求关闭。
 
 ### 在独立标签页发起沟通（2026-10-19 修复，优先于下文旧发送路径）
 
@@ -41,11 +41,9 @@ description: BOSS直聘自动化精准投递。配合 Kimi WebBridge 控制已�
 
 确认消息送达后按原列表 tabId 返回，必须核验 `same_document/same_nodes/order_preserved/preserved/scroll_restored`。失败不重发。`finish_greeting` 仅用于正常发送收尾，或已人工核对目标会话后恢复中断；不能借此跳过 uncertain 审核。
 
-2026-10-19 A/Edge 实投验证：字节跳动「AI应用后端开发实习生（即梦）-剪映」1岗。新标签页建立会话时发现旧逻辑误判加载过渡，修复后核实该会话没有本人消息，在同一会话完成一次专属话术发送；原列表上述五项检查均通过，随后读取下一岗成功。没有重复发起沟通或追加第二个岗位。该结果是一次实测，未验证 B/Chrome 的新详情页路径或长时间连续运行。
-
 ### 保留列表标签页（2026-10-16 历史修复）
 
-A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcastchannel-message`，原列表被移出后退缓存；单纯增加等待无法保留原文档。新专属话术路径改为每个账户独立 session 内保留一个列表标签页和一个可复用聊天标签页，仍保持同一账户操作串行，不修改网站广播机制或浏览器缓存设置。
+发送时可能收到 BroadcastChannel 消息，浏览器报告 `broadcastchannel-message`，原列表被移出后退缓存；单纯增加等待无法保留原文档。新专属话术路径改为每个账户独立 session 内保留一个列表标签页和一个可复用聊天标签页，仍保持同一账户操作串行，不修改网站广播机制或浏览器缓存设置。
 
 聊天入口从当前页面的消息链接读取，不拼接目标会话地址。只从当前 session 查找/打开聊天页，按可见会话行的 `encryptJobId` 精确选择，发送前再次验证活动会话岗位、账户身份、输入框和消息历史。目标不唯一、查不到、已有草稿或身份不符均停止；不按公司/姓名猜测。切回时按已记录 tabId 定位原列表并检查原文档、节点、顺序和滚动；原标签关闭、被导航或列表变化则停止，不重新创建列表。保留聊天标签页供后续复用，不自动关闭用户页面。
 
@@ -55,28 +53,23 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 
 `uncertain` 非空，或触发停止的那条无法证明已送达并核验时，禁止恢复，必须人工核对目标会话中的本人消息后再处理。
 
-## 多账户入口（优先于下文单账户示例）
+## 多账户与独立连接（优先于下文单账户示例）
 
-用户选择 Edge/Chrome 的不同账户时，先阅读 [账户配置与并行操作](references/accounts.md)。通过 `scripts/run_account.py --config <账户配置>` 选择完整配置；一轮 `begin` 返回的运行标识必须用于该账户后续命令。A、B 可各自 begin 并行运行，同一账户必须 end 后才能开始新一轮。画像文件、数据目录、端点和 session 均属于该账户，不修改共享默认画像来切换用户。
+先阅读 [账户与连接说明](references/accounts.md)。每个本地账户拥有自己的身份、画像和历史目录；浏览器类型、端口和 session 放在独立连接配置中。仓库只提供 examples 下的空白模板，个人资料写入被 Git 忽略的 accounts/，连接写入 connections/。用户自行选择账户别名和浏览器环境，不存在内置默认账户。
 
-先按用户选择确定账户，不默认使用 B：
+账户设置使用 `scripts/manage_accounts.py --config <账户> --connection <连接> inspect/bind/bridge-start`。首次绑定需展示实际读到的身份，请用户核对后再 bind；无法可靠识别就停止，不按姓名猜测。
 
-| 账户 | 浏览器 | 配置 | 独立画像 | session |
-|---|---|---|---|---|
-| A | Edge | `accounts/a/account.json` | `accounts/a/profile.json` | `boss-a` |
-| B | Chrome | `accounts/b/account.json` | `accounts/b/profile.json` | `boss-b` |
+开始投递使用 `scripts/run_account.py --config <账户> --connection <连接> begin`，后续命令携带返回的 `--run`，不重复指定连接。下文 `$accountConfig` 表示所选账户配置。画像和连接在本轮固定；同一账户先 end 后可在下一轮选择另一浏览器，历史不变。不同账户可在原运行结束并切换网站登录身份后顺序复用连接；程序不会自动切换登录。
 
-下文 `$accountConfig` 表示本轮选定的配置。账户不同仅改变配置、画像和运行标识，A、B 使用相同的逐岗流程。
+并行要求独立端点与独立登录环境，不要求不同浏览器品牌。不同 session 不能隔离 Cookie，也不能绕过活动运行的端点独占。每个进程固定一个账户与 run，决策和话术文件分别存放，避免共享临时文件覆盖。
 
-首次绑定先展示读取到的浏览器与账户身份，确认对应关系后 `bind`；发送前脚本重复核验身份。无法识别时停止，不能按姓名猜测。首次 `begin` 成功前兼容旧单账户命令，之后浏览器操作必须走显式账户入口。跨账户并行要求独立浏览器端点、登录身份和数据目录；每个执行进程或智能体固定负责一个账户。同一账户、同一端点内仍串行，不能通过换 session、换别名或删除锁绕过。决策与话术文件分别保存到各账户目录，避免共享临时文件互相覆盖。
+错误身份、错误 run、跨账户数据目录与 uncertain 仍然拦截。status 可在命令执行时读取；活着的遗留子进程阻止重入或 end。旧全局运行先用原账户及 run end；不删除锁或历史。旧混合账户配置兼容读取，内嵌连接只是默认值，原 run_account 的管理命令继续可用。
 
-`status` 可在命令运行期间读取所选账户状态。一个账户异常不会自动结束另一账户；活着的遗留子命令仍阻止该账户重入或 end。旧版全局运行必须用原账户及 run 显式 end 后再开始并行，不清除已投历史或 uncertain。并发机制已通过本地模拟与多进程测试，真实发送仍需用户授权。
-
-下文 Chrome、10086、boss-main 和直接调用脚本的示例均描述旧单账户模式；账户模式应使用对应配置及统一入口包装相同操作。仍须用户授权真实投递，配置与只读核验不构成发送授权。
+下文 Chrome、10086、boss-main 和直接调用脚本的例子属于旧单账户兼容模式；多账户使用统一入口包装操作。真实投递仍需用户授权，配置或只读检查不构成发送授权。
 
 ## HR 活跃度筛选（按账户画像配置）
 
-在该账户画像中设置 `"hr_activity_filter": {"mode": "today", "unknown": "allow"}`，要求 HR 在线或明确今天活跃；`mode: "off"` 或未配置时不筛选。A、B 独立配置，下一轮 begin 读取生效。
+在该账户画像中设置 `"hr_activity_filter": {"mode": "today", "unknown": "allow"}`，要求 HR 在线或明确今天活跃；`mode: "off"` 或未配置时不筛选。各账户独立配置，下一轮 begin 读取生效。
 
 卡片优先读取 `bossOnline` 和专用活跃标签；不在线本身不能证明今天未活跃，打开目标岗位后补读详情页 `.boss-active-time`。在线、刚刚活跃、今日/今天活跃放行；昨日等更早标签跳过，只有“3日内/本周/本月活跃”等较宽时间范围也不视为已满足“今天”。小时/分钟标签按北京时间自然日判断。
 
@@ -119,8 +112,8 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 >
 > **运行范式（AI 始终在终审环内）**：
 > - **【默认】immediate 逐岗审核即时投递**：读取当前一张完整 JD → AI 语义判 → APPROVE 立即发送专属话术 → 核验送达 → 切回保留的原列表 → 下一张；REJECT 留痕后继续。旧 walk/open/deliver 仍作为兼容入口，默认不先积攒一批 JD 再投递。
-> **每个账户固定 1 个 SESSION；专属话术复用列表与聊天两个标签页，账户内串行，不借用其他 session。**
-> **必须配合 Kimi WebBridge，使用所选 A/Edge 或 B/Chrome 账户的端点与 session。**
+> **每轮运行固定选定连接的 session；专属话术复用列表与聊天标签页，账户内串行。**
+> **使用 Kimi WebBridge 和本轮选定的连接；更换浏览器必须先 end，再重新 begin。**
 
 ---
 
@@ -146,7 +139,7 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 | ③ 执行 | `python scripts/pipeline_batch.py go decisions.json` | 按来源关键词自动分组导航，页内批量 reject/deliver |
 
 > **⚠️ workdir 必须与收尾报告一致**：`harvest_pool.py` / `pipeline_batch.py` 的
-> 工作目录解析顺序为 **显式参数（采集/报告） → `BOSS_WORKDIR` 环境变量 → `D:/Dev/code/my_github/boss-zhipin-assistant/boss-data`**。所有流程应使用同一目录。
+> 工作目录解析顺序为 **显式参数（采集/报告） → `BOSS_WORKDIR` 环境变量 → 项目内 `boss-data/`（旧单账户升级须显式指定原历史目录，见账户说明）**。所有流程应使用同一目录。
 > 三者读写的是**同一个目录**里的 `pool.json` / `stream_progress.json` / `walk_state.json`：
 > ```bash
 > export BOSS_WORKDIR=/path/to/workdir     # 建议显式固定，避免 cwd 漂移
@@ -162,7 +155,7 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 - **标题会骗人**：`Coding实习生` 可能是数据标注岗；`Golang` 可能写死 26届；
   `春招实习生` 可能是几年前的老 JD。存疑必读 JD。
 - **学历与实习届别按账户画像审核**：读完整 JD 确认要求，再按用户最新明确指示及所选账户本轮画像快照判断；卡面学历、硕士要求或届别专属字样本身不构成通用拒绝规则。
-  **账户 A、B（2026-10-16 更新）**：两个账户均忽略「硕士及以上」学历要求及「面向2027届」等届别限制，不以这些条件拒绝，其他投递条件仍须符合各自画像；只有明确排除在校生（如要求已毕业）才按此拒绝。招呼语仍如实说明本科、2028 届，不改写真实学历或届别。
+  **学历与届别**：按所选账户的真实画像和用户明确偏好审核；是否接受不满足 JD 学历或届别要求的岗位由用户决定，不能把其他账户的偏好作为默认规则。招呼语如实说明背景。
 
 **批量操作经验与同页扫描**：
 - 长列表读取 JD 可能超过执行工具的单次等待时间。按工具能力分批或后台运行，使用 `python -u` 保存实时日志；读取同一个浏览器标签页的任务必须串行。中断后核对成功读取的岗位与缓存，再补读剩余岗位。
@@ -176,7 +169,7 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 
 ## ⚠️ 前置依赖（必读）
 
-- 本 Skill **必须**配合 **Kimi WebBridge**，控制用户选定、已登录 BOSS直聘的 A/Edge 或 B/Chrome；端口与 session 按各自账户配置。
+- 本 Skill **必须**配合 **Kimi WebBridge**，控制用户选定、已登录 BOSS直聘的 Chrome 或 Edge；端口与 session 按本轮连接配置。
 - **绝不可**用 CDP 直连 / xbrowser / 内置 browser 工具接管投递——会丢失登录态。
 - WebBridge 不可用时先修复它，不要换工具。
 
@@ -192,10 +185,10 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 
 智能体开场提示：
 
-> 「本轮使用哪个账户：A（Edge）还是 B（Chrome）？请打开对应浏览器，确认已安装并连接 **Kimi WebBridge** 插件，在该浏览器登录对应的 **BOSS直聘** 账户。完成后请回复『环境配置完成』。」
+> 「本轮使用哪个本地账户配置和浏览器连接？请打开所选浏览器，确认 Kimi 扩展连接地址与连接配置一致，并已登录该账户的 BOSS 直聘身份。尚未建立本地配置时，先按账户说明从空白模板创建。」
 
 - 若你**尚未安装 WebBridge / 插件未连接** → 提示前往 **https://www.kimi.com/zh-cn/features/webbridge** 安装并启用，再登录 Boss 直聘，然后回复『环境配置完成』。
-- **仅当你明确回复『环境配置完成』后**，才进入下一步。
+- 已有明确的环境信息和用户授权时继续检查；缺失时补齐本地账户与连接配置，再用 env 和身份检查确认可用。
 - 说明：脚本运行时（`env_check.py`）仍会做真实检测（Chrome / WebBridge / 登录态），未就绪会终止并给出修复指引；本问答环节是前置软确认，二者互补。
 - ⚠️ **智能体引导硬约束**：本技能**直接操控用户真实的 Chrome + WebBridge 完成真实投递**，引导中**严禁**出现「本环境无法真正操控浏览器 / 只会虚拟演练 / 不会真实发送」之类的免责声明——那是错误表述。环境不可达时由 `env_check.py` 真实检测并报错终止，而非虚拟。
 
@@ -216,7 +209,7 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 
 ### 第 2 步：生成投递配置与代码（动态生成标准，零硬编码）
 
-智能体根据你的回答生成或更新**所选账户的画像**（A：`accounts/a/profile.json`；B：`accounts/b/profile.json`；旧单账户模式才用 `user_profile.json`），关键字段：
+智能体根据你的回答生成或更新**所选账户的画像**（路径由账户配置的 profile 字段指定；旧单账户模式才用 `user_profile.json`），关键字段：
 
 - `role_summary`：把你第②项的一句话求职方向原样写入（AI 审核的**核心依据**）
 - `target_city` + `city_code`：由城市映射
@@ -229,10 +222,11 @@ A/Edge 实测发送时收到 BroadcastChannel 消息，浏览器报告 `broadcas
 然后生成运行命令并向你**展示档案摘要 + 命令，确认后再运行**：
 
 ```powershell
-# 在技能目录执行，沿用第0步选择，不默认A或B。
-# A/Edge：accounts/a/account.json；B/Chrome：accounts/b/account.json
+# 在技能目录执行，沿用第0步选择，不默认任何账户。
+# 账户与连接独立选择；连接可在下一轮更换。
 $accountConfig = "<第0步选定的账户配置路径>"
-python scripts/run_account.py --config $accountConfig begin
+$connection = "<选定连接配置路径>"
+python scripts/run_account.py --config $accountConfig --connection $connection begin
 $runId = "<begin返回的run>"
 python scripts/run_account.py --config $accountConfig --run $runId immediate start "<符合画像的关键词>"
 python scripts/run_account.py --config $accountConfig --run $runId immediate next
@@ -408,8 +402,8 @@ AI 基于**语义理解**决定 APPROVE / REJECT，**不是关键词命中即过
 | v1~v4.3 | 06-12~07-30 | 四阶段/流式/加固（详见历史） |
 | v5.0 | 07-31 | 泛用化：个性化外置 user_profile.json |
 | v5.1 | 07-31 | 引导增强 + 环境检测 + 须知 + 成果汇报 |
-| v5.2 | 07-31 | 问答式引导 + 去特定人物（王浩/文旅） |
-| **v6.0** | **08-01** | **零硬编码筛选 + AI 语义终审**：① 删除 config_v3 全部 BASE_* 硬编码（行业黑名单/手艺岗/门店店长 off-target/管理岗豁免/强相关关键词表）② 删除 judge()/is_off_target()/关键词初筛，判定改由 AI 语义完成 ③ 新增 reviewer.py（语义审核辅助）④ 流程改为 collect→AI审核→apply ⑤ user_profile.json 改为 role_summary/prefer/avoid 自由文本，去除 off_target 与王浩定制 ⑥ SKILL.md 重写，示例泛化（司机/教师），明确零硬编码与 AI 终审原则 |
+| v5.2 | 07-31 | 问答式引导 + 去特定人物（旧版个人预设） |
+| **v6.0** | **08-01** | **零硬编码筛选 + AI 语义终审**：① 删除 config_v3 全部 BASE_* 硬编码（行业黑名单/手艺岗/门店店长 off-target/管理岗豁免/强相关关键词表）② 删除 judge()/is_off_target()/关键词初筛，判定改由 AI 语义完成 ③ 新增 reviewer.py（语义审核辅助）④ 流程改为 collect→AI审核→apply ⑤ user_profile.json 改为 role_summary/prefer/avoid 自由文本，去除 off_target 与个人定制 ⑥ SKILL.md 重写，示例泛化（司机/教师），明确零硬编码与 AI 终审原则 |
 | **v6.1** | **08-01** | **审核锁死为「智能体自审查 · 零外部 API」**：① 彻底移除 reviewer.py 外部 LLM/OpenAI 兼容接口调用与全部 API 密钥环境变量（BOSS_LLM_*）② 删除 phase_stream.py 的 `auto` 模式（不再自动调 LLM）③ 新增 `status` 模式（本地汇总待审/已决）④ apply 增加决策结构校验（decision 合法值 + reason 非空 + candidate_id 一致）⑤ 明确约束：审核由智能体自身完成，不调外部 API、不要求人工逐条审核；脚本无自主关键词放行/拒绝 |
 | **v6.3** | **08-01** | **推荐页内原地投递（手把手纠正后）**：① 删除 `deliver_click` 的 `_goto_job`（不再 navigate 到 job_detail URL，杜绝列表刷新错位与"投A点B"）② deliver 全程停留推荐页、用 WebBridge 原生 click 选中左侧卡片、右侧就地切 JD、点「立即沟通」、成功弹窗只点「留在此页」③ 新增 `_ensure_recommend/_select_card_on_recommend/_panel_shows_job` 每步 DOM 校验 ④ `click_popup_button/_click_text` 改用原生点击 ⑤ apply 开头先 `_ensure_recommend` |
 | **v6.4** | **08-01** | **红线：投递主流程绝不打开聊天页 `/chat`**：① 定位根因——`run_apply` 末尾自动调用 `verify_against_account` 会 `navigate` 到 `/chat` 并遗留页面在聊天页，违反"流程中不出现聊天页"铁律 → 改为默认关闭，仅 `--verify-account`（apply 附加）或独立 `--mode verify` 显式触发，且读后**立即导航回推荐页** ② 修复 `click_popup_button` 误点隐患：原选择器含 `div/span` 会命中包裹容器（其 textContent 也含按钮文字）导致点到空壳、按钮没真正触发 → 改为仅限 `button/a` 且精确匹配优先、包含匹配只认叶子节点 ③ 投递结束 `run_apply` 强制 `_ensure_recommend` 确保落点在推荐页 ④ 删除原末尾 cross-check 的 `delivered_titles` 未定义 NameError |
@@ -429,7 +423,7 @@ AI 基于**语义理解**决定 APPROVE / REJECT，**不是关键词命中即过
 | 问题 | 根因（v5） | v6 修复 |
 |------|-----------|---------|
 | **乱投不匹配岗**（如投出文案/品牌策划，而非用户要的酒店运营） | `judge()` 是"负向护栏"模型：只拦低薪/BD/餐饮店长/手艺岗，从不要求"匹配用户意向"；`strong_title_kw`（用户意向）仅存在于不被自动链路调用的 `classify_relevance()`，形同虚设 | 删除 judge/关键词逻辑；唯一审核方是 AI 语义判断，直接消费用户 `role_summary`/`prefer`/`avoid` |
-| **硬编码为历史用户（王浩/酒店）定制** | `BASE_BAD_WORK`(保洁/美容手艺岗)、`OFF_TARGET_*`(餐饮店长剔/酒店店长豁免)、`BASE_MANAGER_WORDS`(管理岗豁免) 都是酒店求职者的偏好，被写死成全局规则 | 全部删除；任何标准只来自用户本次填写的 `role_summary`/`prefer`/`avoid` |
+| **硬编码为历史用户（个人求职偏好）定制** | `BASE_BAD_WORK`(保洁/美容手艺岗)、`OFF_TARGET_*`(餐饮店长剔/酒店店长豁免)、`BASE_MANAGER_WORDS`(管理岗豁免) 都是酒店求职者的偏好，被写死成全局规则 | 全部删除；任何标准只来自用户本次填写的 `role_summary`/`prefer`/`avoid` |
 | **无语义理解，纯关键词** | `judge()` 用 `T_EXCLUDE`/`AVOID_WORK_SIGNALS` 字符串包含判定 | 改为智能体自身语义审核（零外部 API），输出带理由的 APPROVE/REJECT/NEED_MORE |
 
 ---
@@ -437,7 +431,7 @@ AI 基于**语义理解**决定 APPROVE / REJECT，**不是关键词命中即过
 ## 管道总览（v6.13）
 
 ```
-实时投递（immediate.py · 默认路径，A/B使用各自配置）:
+实时投递（immediate.py · 默认路径，各账户使用自己的配置）:
   begin → immediate start <关键词>
     → immediate next（读取一张完整JD，返回jobId与review_id）
     → AI 语义判（基于账户画像 + JD 全文）
@@ -464,10 +458,11 @@ AI 基于**语义理解**决定 APPROVE / REJECT，**不是关键词命中即过
 ## 快速执行
 
 ```powershell
-# 在技能目录执行；先完成上述引导并选择账户，不默认A或B。
-# A/Edge：accounts/a/account.json；B/Chrome：accounts/b/account.json
+# 在技能目录执行；先完成上述引导并选择账户，不默认任何账户。
+# 账户与连接独立选择；连接可在下一轮更换。
 $accountConfig = "<本轮选定的账户配置路径>"
-python scripts/run_account.py --config $accountConfig begin
+$connection = "<选定连接配置路径>"
+python scripts/run_account.py --config $accountConfig --connection $connection begin
 $runId = "<begin返回的run>"
 
 # 默认：next → 审核 → decide，逐岗完成
@@ -503,7 +498,7 @@ python scripts/run_account.py --config $accountConfig --run $runId verify-full
 
 只读，不改动投递记录，结束时回推荐页；明细写入 `<workdir>/_chat_audit.json`。**核对前先明确对方看的是哪个数字**：站点「沟通过」的展示位（沟通页页签／App「我的」／职位历史）各自口径不同，而本地记录按**岗位**计、一次投递一个会话；不要把两者直接相减。
 
-> **首次使用前**：填写所选账户的画像（A：`accounts/a/profile.json`；B：`accounts/b/profile.json`，重点是 `role_summary` 一句话自述 + `prefer`/`avoid` 清单）。账户模式不通过改共享画像或环境变量切换用户；旧单账户模式仍保留 `user_profile.json` / `BOSS_PROFILE` 用法。
+> **首次使用前**：填写所选账户的画像（路径由账户配置指定，重点是 `role_summary` 一句话自述 + `prefer`/`avoid` 清单）。账户模式不通过改共享画像或环境变量切换用户；旧单账户模式仍保留 `user_profile.json` / `BOSS_PROFILE` 用法。
 
 ---
 
@@ -514,8 +509,9 @@ python scripts/run_account.py --config $accountConfig --run $runId verify-full
 ├── SKILL.md                    ← 本文件
 ├── user_profile.json           ← ★ 个人档案（零硬编码入口）：role_summary/prefer/avoid 自由文本
 ├── boss_applied.json           ← 历史投递样本（参考，不参与运行）
-├── accounts/a/                 ← A/Edge的独立配置、画像和data目录（本地）
-├── accounts/b/                 ← B/Chrome的独立配置、画像和data目录（本地）
+├── accounts/<别名>/            ← 各账户配置、画像和data目录（仅本地）
+├── connections/                ← 独立浏览器连接配置（仅本地）
+├── examples/                   ← 无个人信息的配置模板
 ├── assets/
 ├── scripts/
 │   ├── __init__.py

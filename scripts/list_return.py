@@ -79,7 +79,7 @@ def restore_list(context, jid, session=SESSION, timeout=8):
 
     if context.get('tab_id') is not None:
         from scripts.chat_tab import tab_command
-        from scripts.account_browser import verify_identity
+        from scripts.browser_session import verify_identity
         tabs = tab_command('list_tabs', session=session).get('tabs', [])
         if not any(t.get('tabId') == context['tab_id'] and t.get('url') == context['url'] for t in tabs):
             return failed('原列表标签页已关闭或被导航，不重新创建列表', {})

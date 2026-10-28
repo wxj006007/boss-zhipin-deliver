@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from scripts import execution_context as runtime_context
 from scripts import page_scan as scan
 from scripts import pipeline_batch as batch
 
@@ -18,6 +19,7 @@ def setUpModule():
     unittest.addModuleCleanup(stack.close)
     folder = stack.enter_context(tempfile.TemporaryDirectory())
     stack.enter_context(patch.object(accounts, 'CONTROL_DIR', Path(folder)))
+    stack.enter_context(patch.object(runtime_context, 'CONTROL_DIR', Path(folder)))
     stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
 
 

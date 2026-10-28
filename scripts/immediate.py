@@ -12,7 +12,7 @@ import uuid
 
 from scripts import _live_driver as drv, webbridge_client as wb
 from scripts import phase_stream as ps
-from scripts.accounts import metadata, fingerprint
+from scripts.execution_context import metadata, fingerprint
 from scripts.pipeline_batch import kw_url
 from scripts.runtime import atomic_write_json, resolve_workdir
 from scripts.hr_activity import record_skip

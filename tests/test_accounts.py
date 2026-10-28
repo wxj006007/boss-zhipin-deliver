@@ -13,8 +13,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from scripts import accounts as ac
-from scripts import account_browser as browser
+from scripts import execution_context as runtime_context
+from scripts import accounts as ac, execution_context, manage_accounts
+from scripts import browser_session as browser
 from scripts import run_account as runner
 from scripts import webbridge_client as wb
 from scripts import config_v3, phase_stream, greeting
@@ -28,6 +29,7 @@ class AccountTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.object(ac, 'CONTROL_DIR', self.root / 'control'))
+        self.stack.enter_context(patch.object(execution_context, 'CONTROL_DIR', self.root / 'control'))
         self.stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
         self.a = self.make_config('a', 'edge', 10087)
         self.b = self.make_config('b', 'chrome', 10086)
@@ -151,7 +153,7 @@ class AccountTests(unittest.TestCase):
     def test_bind_requires_confirmation_for_exact_identity(self):
         config = dict(self.a, expected_identity=None)
         state = dict(browser='edge', identity=self.a['expected_identity'])
-        with patch.object(runner, 'inspect_identity', return_value=state):
+        with patch.object(manage_accounts, 'inspect_identity', return_value=state):
             with self.assertRaises(ValueError):
                 runner.bind(config, 'wrong')
             runner.bind(config, ac.fingerprint(state))
@@ -232,6 +234,7 @@ class BridgeRoutingTests(unittest.TestCase):
                 self.wfile.write(json.dumps({'ok': True, 'data': {'value': '{}', 'success': True}}).encode())
         with ExitStack() as stack, tempfile.TemporaryDirectory() as folder:
             stack.enter_context(patch.object(ac, 'CONTROL_DIR', Path(folder)))
+            stack.enter_context(patch.object(runtime_context, 'CONTROL_DIR', Path(folder)))
             stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
             stack.enter_context(patch.object(wb.time, 'sleep'))
             for name in ('a', 'b'):

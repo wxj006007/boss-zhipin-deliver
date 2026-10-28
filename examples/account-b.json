@@ -1,9 +1,0 @@
-{
-  "account": "b",
-  "browser": "chrome",
-  "bridge": {"host": "127.0.0.1", "port": 10086},
-  "session": "boss-b",
-  "profile": "../accounts/b/profile.json",
-  "workdir": "../accounts/b/data",
-  "expected_identity": null
-}

@@ -39,9 +39,9 @@ from scripts.webbridge_client import (
     navigate, snapshot_page, click,
 )
 from scripts.config_v3 import load_profile
-from scripts.account_browser import verify_identity, guarded_script
+from scripts.browser_session import verify_identity, guarded_script
 from scripts.webbridge_client import evaluate_once
-from scripts.accounts import metadata, assert_workdir
+from scripts.execution_context import metadata, assert_workdir
 from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 from scripts.env_check import check_env
 from scripts.runtime import atomic_write_text, salary_range_k

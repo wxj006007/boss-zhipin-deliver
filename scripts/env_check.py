@@ -29,7 +29,7 @@ if len(_HERE) >= 3 and _HERE[0] == "/" and _HERE[1].isalpha() and _HERE[2] == "/
 SKILL_DIR = os.path.dirname(_HERE)
 if SKILL_DIR not in sys.path:
     sys.path.insert(0, SKILL_DIR)
-from scripts.accounts import context
+from scripts.execution_context import context
 from scripts.webbridge_client import DEFAULT_HOST, DEFAULT_PORT
 
 # ── 检测结果 ──────────────────────────────────────
@@ -97,7 +97,7 @@ def _check_webbridge():
     """检测 Kimi WebBridge 是否在本地端口 10086 可达。"""
     try:
         if context():
-            from scripts.account_browser import bridge_status
+            from scripts.browser_session import bridge_status
             status = bridge_status(context())
             return bool(status.get('extension_connected')), f'账户桥接端口 {_WEBBRIDGE_PORT}，扩展连接={status.get("extension_connected")}'
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -127,7 +127,7 @@ def _check_boss_login():
     """
     try:
         if context():
-            from scripts.account_browser import verify_identity
+            from scripts.browser_session import verify_identity
             verify_identity()
             return True, '浏览器及账户身份已核验'
         # 延迟导入，避免无 WebBridge 时 import 失败

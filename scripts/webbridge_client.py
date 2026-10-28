@@ -41,7 +41,7 @@ try:
     from .runtime import atomic_write_json
 except ImportError:
     from runtime import atomic_write_json
-from scripts.accounts import context, assert_route, assert_run, assert_workdir, metadata
+from scripts.execution_context import context, assert_route, assert_run, assert_workdir, metadata
 from scripts.hr_activity import ACTIVITY_HELPER_JS
 
 # ═══════════════════════════════════════════════════════════
@@ -53,8 +53,8 @@ DEFAULT_HOST = _ACCOUNT.get('host', "127.0.0.1")
 DEFAULT_PORT = _ACCOUNT.get('port', 10086)
 _ROUTE = ContextVar('webbridge_route', default=None)
 
-# ★ 全局唯一 SESSION — 所有脚本共用一个标签页
-#   禁止在各脚本中自定义 SESSION 名
+# 每个执行进程从本轮运行契约取得 session；列表与聊天标签可在该 session 内切换。
+# 旧单账户入口仍保留默认值，多账户运行不能偏离快照中的连接。
 SESSION = _ACCOUNT.get('session', "boss-main")
 
 DEFAULT_TIMEOUT = 60

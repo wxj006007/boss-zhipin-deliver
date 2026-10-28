@@ -1,0 +1,6 @@
+{
+  "account": "my-account",
+  "profile": "profile.json",
+  "workdir": "data",
+  "expected_identity": null
+}

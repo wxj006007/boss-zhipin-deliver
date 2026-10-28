@@ -122,8 +122,8 @@ def main():
     import argparse
     from pathlib import Path
     import uuid
-    from scripts.accounts import assert_run, metadata
-    from scripts.account_browser import verify_identity
+    from scripts.execution_context import assert_run, metadata
+    from scripts.browser_session import verify_identity
     from scripts.chat_tab import tab_command
     from scripts.pipeline_batch import kw_url
     from scripts.runtime import atomic_write_json

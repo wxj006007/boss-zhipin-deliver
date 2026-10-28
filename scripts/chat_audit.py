@@ -10,7 +10,7 @@
      必须同时 dispatchEvent('scroll')）；
   3. 每步收集可见会话行，按「HR 姓名 + 公司 + 角色」身份去重，连续多步无新增即停；
   4. 与本地 `stream_progress.json` 的 delivered 逐条比对：
-     - A 会话存在且招呼语是最后一条消息（含固定开头标记）
+     - A 会话存在且本地记录的专属招呼语片段出现在最后消息预览
      - B 会话存在（HR 已回复，招呼语被后续消息覆盖）
      - C 会话列表中找不到对应公司
   只读，不改动任何投递记录；结束时回到推荐页。
@@ -28,8 +28,6 @@ from scripts import webbridge_client as wb
 
 CHAT_URL = "https://www.zhipin.com/web/geek/chat"
 RECOMMEND_URL = "https://www.zhipin.com/web/geek/jobs?ka=header-jobs"
-# 本技能招呼语的固定开头标记，用于判断会话里是否有我们发出的消息。
-GREETING_MARKERS = ("learn-claude-code", "桃酥不是桃")
 
 READ = r"""
 (() => {
@@ -66,7 +64,7 @@ def identity(row_text):
 def unique_window(text, others, width=12):
     """最早出现、且在 others 里都不存在的 width 字窗口 —— 该记录的唯一指纹。
 
-    本技能招呼语共享同一段固定开头，用开头匹配会把所有记录指向同一个会话；
+    多条招呼语可能共享同一段开头，用共同开头匹配会误指向同一个会话；
     必须取「只在本文本里出现」的片段，才能精确对应到具体会话。
     """
     for k in range(0, max(0, len(text) - width) + 1):
@@ -137,8 +135,7 @@ def audit(workdir, verbose=True):
 
     result = {
         "conversations_enumerated": len(identities),
-        "conversations_with_our_greeting": sum(
-            1 for t in identities.values() if any(m in t for m in GREETING_MARKERS)),
+        "conversations_with_our_greeting": len(conv_seen),
         "local_delivered": len(delivered),
         "A_greeting_is_latest": len(precise),
         "B_exists_but_replied": len(company_only),

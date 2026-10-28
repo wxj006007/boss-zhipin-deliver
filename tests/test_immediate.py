@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from scripts import execution_context as runtime_context
 from scripts import immediate as im, accounts
 
 
@@ -18,6 +19,7 @@ class ImmediateTests(unittest.TestCase):
         self.stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items()
                                                        if not k.startswith('BOSS_')}, clear=True))
         self.stack.enter_context(patch.object(accounts, 'CONTROL_DIR', self.root / 'control'))
+        self.stack.enter_context(patch.object(runtime_context, 'CONTROL_DIR', self.root / 'control'))
         self.stack.enter_context(patch.object(im, 'resolve_workdir', return_value=str(self.root)))
         self.stack.enter_context(patch.object(im.drv, 'load_profile_cached', return_value={}))
         self.stack.enter_context(patch.object(im.drv, 'walk_state', return_value={}))

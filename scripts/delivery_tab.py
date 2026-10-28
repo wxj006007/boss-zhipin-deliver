@@ -4,7 +4,7 @@ import time
 from urllib.parse import urlparse
 
 from scripts.webbridge_client import evaluate, evaluate_once, SESSION
-from scripts.account_browser import verify_identity, guarded_script
+from scripts.browser_session import verify_identity, guarded_script
 from scripts.chat_tab import tab_command, SELECT_CHAT_JS, STAY_JS
 from scripts.hr_activity import decide as activity_decision
 

@@ -11,7 +11,7 @@ from scripts.chat_tab import prepare_chat_tab
 from scripts.delivery_tab import (prepare_delivery_tab, click_delivery_contact,
                                   enter_delivery_chat as enter_chat_tab,
                                   DeliveryReviewRequired)
-from scripts.account_browser import verify_identity, guarded_script
+from scripts.browser_session import verify_identity, guarded_script
 from scripts.hr_activity import check_current as check_activity, skip_result as activity_skip_result
 
 

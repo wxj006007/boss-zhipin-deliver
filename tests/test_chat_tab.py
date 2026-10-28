@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from scripts import chat_tab as ct, list_return as lr, account_browser as identity
+from scripts import chat_tab as ct, list_return as lr, browser_session as identity
 
 
 class ChatTabTests(unittest.TestCase):

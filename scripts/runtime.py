@@ -4,11 +4,11 @@ import os
 import re
 import tempfile
 
-DEFAULT_WORKDIR = "D:/Dev/code/my_github/boss-zhipin-assistant/boss-data"
+DEFAULT_WORKDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'boss-data')
 
 
 def resolve_workdir(value=None):
-    from scripts.accounts import context, assert_workdir
+    from scripts.execution_context import context, assert_workdir
     ctx = context()
     if ctx:
         return assert_workdir(os.path.abspath(value or ctx['workdir']))

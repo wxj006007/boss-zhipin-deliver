@@ -122,7 +122,7 @@ def skip_result(check):
 
 def record_skip(workdir, job, check, stage):
     from scripts.webbridge_client import ProgressManager
-    from scripts.accounts import metadata
+    from scripts.execution_context import metadata
     pm = ProgressManager(os.path.join(workdir, 'stream_progress.json')).load()
     now = datetime.now(SHANGHAI)
     item = dict(jobId=job['jobId'], title=job.get('title', ''), company=job.get('company', ''),

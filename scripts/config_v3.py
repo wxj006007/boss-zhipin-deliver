@@ -75,7 +75,7 @@ def load_profile(path=None):
     找不到时使用内置 EXAMPLE_PROFILE，保证技能可开箱运行。
     以 BOSS_PROFILE 环境变量优先，便于智能体在运行时注入不同档案。
     """
-    from scripts.accounts import context, assert_run, canonical
+    from scripts.execution_context import context, assert_run, canonical
     ctx = context()
     if ctx:
         assert_run(ctx)

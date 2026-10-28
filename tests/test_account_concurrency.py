@@ -16,6 +16,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from scripts import execution_context as runtime_context
 from scripts import accounts as ac, run_account as runner
 from scripts.runtime import atomic_write_json
 
@@ -67,6 +68,7 @@ class ConcurrencyTests(unittest.TestCase):
                         ignore=shutil.ignore_patterns('__pycache__'))
         (self.root / 'fake_account_job.py').write_text(FAKE_JOB, encoding='utf-8')
         self.stack.enter_context(patch.object(ac, 'CONTROL_DIR', self.root / '.account-runtime'))
+        self.stack.enter_context(patch.object(runtime_context, 'CONTROL_DIR', self.root / '.account-runtime'))
         self.stack.enter_context(patch.object(runner, 'verify_identity', return_value={}))
         self.stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items()
                                                        if not k.startswith('BOSS_')}, clear=True))

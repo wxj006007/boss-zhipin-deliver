@@ -86,7 +86,7 @@ from scripts.webbridge_client import (
 from scripts.config_v3 import load_profile
 from scripts.greeting import deliver_greeting, load_greeting, validate_greeting
 from scripts.runtime import resolve_workdir, atomic_write_json
-from scripts.account_browser import verify_identity
+from scripts.browser_session import verify_identity
 from scripts.hr_activity import decide as activity_decision, check_current as check_activity, record_skip as record_activity_skip, skip_result as activity_skip_result
 
 WORKDIR = resolve_workdir()
@@ -97,7 +97,7 @@ def load_profile_cached():
     try:
         return load_profile()
     except Exception:
-        from scripts.accounts import context
+        from scripts.execution_context import context
         if context():
             raise
         return {}

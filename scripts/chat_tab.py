@@ -8,7 +8,7 @@ import time
 from urllib.parse import urlparse
 
 from scripts.webbridge_client import api, evaluate, evaluate_once, SESSION
-from scripts.account_browser import verify_identity, guarded_script
+from scripts.browser_session import verify_identity, guarded_script
 
 
 def tab_command(action, args=None, session=SESSION):

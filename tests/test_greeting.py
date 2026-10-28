@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from scripts import execution_context as runtime_context
 from scripts import greeting as g
 from scripts import phase_stream as ps
 from scripts import _live_driver as drv
@@ -280,6 +281,7 @@ def setUpModule():
     unittest.addModuleCleanup(stack.close)
     folder = stack.enter_context(tempfile.TemporaryDirectory())
     stack.enter_context(patch.object(accounts, 'CONTROL_DIR', Path(folder)))
+    stack.enter_context(patch.object(runtime_context, 'CONTROL_DIR', Path(folder)))
     stack.enter_context(patch.dict(os.environ, {k: v for k, v in os.environ.items() if not k.startswith('BOSS_')}, clear=True))
 
 
